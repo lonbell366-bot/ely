@@ -34,14 +34,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class ElytraFlipClient implements ClientModInitializer {
-    public static double minProfit = 2_000_000;
-    public static double maxCapital = 500_000_000;
-    public static int orderQuantity = 1;
-    public static double ahTaxPercent = 0.0;
-    public static int checkIntervalSec = 15;
-    public static int refreshIntervalSec = 60;
-    public static int retryScanSec = 10;
-
+    public static double minProfit = 2_000_000, maxCapital = 500_000_000, ahTaxPercent = 0.0;
+    public static int orderQuantity = 1, checkIntervalSec = 15, refreshIntervalSec = 60, retryScanSec = 10;
     public static int slotFirstItem = 0, slotYourOrdersBtn = 49, slotMyActiveOrder = 10;
     public static int slotClaimItem = 13, slotCancelOrder = 15, slotCreateOrderBtn = 50;
     public static int slotOrderSearchBtn = 11, slotOrderSelectItem = 0, slotOrderSetPriceBtn = 13;
@@ -118,21 +112,20 @@ public class ElytraFlipClient implements ClientModInitializer {
             }
             case EVALUATE_INITIAL_PROFIT -> {
                 if (lowestAhPrice <= 0 || highestOrderPrice <= 0) {
-                    logChat(client, "§cKhông đọc được giá, thử lại sau " + retryScanSec + "s...");
                     transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 10, "§cĐợi quét lại...");
                     return;
                 }
                 double netProfit = calculateNetProfit(highestOrderPrice, lowestAhPrice);
-                logChat(client, "§7Order Cao Nhất: §e" + formatMoney(highestOrderPrice) + " §7| AH Thấp Nhất: §a" + formatMoney(lowestAhPrice) + " §7| Lời: §b+" + formatMoney(netProfit));
+                logChat(client, "§7Order: §e" + formatMoney(highestOrderPrice) + " §7| AH: §a" + formatMoney(lowestAhPrice) + " §7| Lời: §b+" + formatMoney(netProfit));
                 if (netProfit < minProfit || highestOrderPrice * orderQuantity > maxCapital) {
-                    logChat(client, "§eChưa đủ điều kiện lời 2m hoặc vượt vốn. Đợi " + retryScanSec + "s...");
-                    transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 10, "§eĐợi thị trường...");
+                    transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 10, "§eChưa đủ lời 2m...");
                     return;
                 }
                 myOrderPrice = highestOrderPrice;
                 transition(BotState.CREATE_ORDER_OPEN, 10, 20, "§bĐặt Order: " + formatMoney(myOrderPrice));
             }
-            case CREATE_ORDER_OPEN -> {
+// === HET PHAN 1 - DAN TIEP PHAN 2 NGAY DUOI DONG NAY ===
+                            case CREATE_ORDER_OPEN -> {
                 sendCommand(client, "order");
                 transition(BotState.CREATE_ORDER_CLICK_BTN, 25, 35, "§bMở Create Order...");
             }
@@ -198,7 +191,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     ItemStack claim = s.getScreenHandler().getSlot(slotClaimItem).getStack();
                     if (!claim.isEmpty() && claim.isOf(Items.ELYTRA)) {
-                        logChat(client, "§a§lĐã có người bán Elytra vào Order! Đang rút hàng...");
+                        logChat(client, "§a§lĐã có người bán Elytra! Đang rút hàng...");
                         clickSlotIfOpen(client, slotClaimItem, SlotActionType.QUICK_MOVE);
                         client.player.closeHandledScreen();
                         transition(BotState.SELL_SCAN_AH_OPEN, 20, 30, "§dChuẩn bị bán AH...");
@@ -207,7 +200,6 @@ public class ElytraFlipClient implements ClientModInitializer {
                     client.player.closeHandledScreen();
                 }
                 if (monitorTicksElapsed >= refreshIntervalSec * 20) {
-                    logChat(client, "§6[Làm mới 60s] Hủy đơn cũ và tạo lại theo giá mới...");
                     isRecheckingMarket = false;
                     transition(BotState.CANCEL_ORDER_OPEN, 15, 25, "§6Làm mới Order 60s...");
                 } else {
@@ -219,16 +211,11 @@ public class ElytraFlipClient implements ClientModInitializer {
                 isRecheckingMarket = false;
                 if (highestOrderPrice > 0 && lowestAhPrice > 0) {
                     if (highestOrderPrice <= myOrderPrice) {
-                        logChat(client, "§a[15s] Order của bạn (" + formatMoney(myOrderPrice) + ") vẫn cao nhất. Giữ nguyên!");
                         state = BotState.MONITOR_WAIT;
                     } else if (calculateNetProfit(highestOrderPrice, lowestAhPrice) >= minProfit && highestOrderPrice * orderQuantity <= maxCapital) {
-                        logChat(client, "§e[15s] Có người đặt cao hơn (" + formatMoney(highestOrderPrice) + "), vẫn đủ lời 2m. Đặt lại!");
                         myOrderPrice = highestOrderPrice; isRecheckingMarket = true;
                         transition(BotState.CANCEL_ORDER_OPEN, 15, 25, "§eCập nhật Order...");
-                    } else {
-                        logChat(client, "§c[15s] Bị đè giá nhưng không đủ lời 2m. Giữ nguyên đơn cũ!");
-                        state = BotState.MONITOR_WAIT;
-                    }
+                    } else state = BotState.MONITOR_WAIT;
                 } else state = BotState.MONITOR_WAIT;
             }
             case CANCEL_ORDER_OPEN -> {
@@ -264,10 +251,7 @@ public class ElytraFlipClient implements ClientModInitializer {
             }
             case SELL_MOVE_ELYTRA_TO_HAND -> {
                 int slot = findElytraInInventory(client);
-                if (slot == -1) {
-                    transition(BotState.SCAN_AH_OPEN, 30, 45, "§eQuét lại...");
-                    return;
-                }
+                if (slot == -1) { transition(BotState.SCAN_AH_OPEN, 30, 45, "§eQuét lại..."); return; }
                 client.player.getInventory().selectedSlot = 0;
                 if (slot != 0 && client.interactionManager != null) {
                     int cSlot = slot < 9 ? slot + 36 : slot;
@@ -296,8 +280,8 @@ public class ElytraFlipClient implements ClientModInitializer {
             default -> {}
         }
     }
-
-    private void renderHud(DrawContext ctx, RenderTickCounter tc) {
+// === HET PHAN 2 - DAN TIEP PHAN 3 NGAY DUOI DONG NAY ===
+                    private void renderHud(DrawContext ctx, RenderTickCounter tc) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.options.hudHidden) return;
         ctx.fill(6, 6, 201, 84, 0x90000000);
@@ -337,4 +321,104 @@ public class ElytraFlipClient implements ClientModInitializer {
         LoreComponent lore = stack.get(DataComponentTypes.LORE);
         if (lore != null) {
             for (Text line : lore.lines()) {
-                double p = pa
+                double p = parsePriceLine(line.getString());
+                if (p > 0) return p;
+            }
+        }
+        List<Text> tip = stack.getTooltip(Item.TooltipContext.DEFAULT, client.player, TooltipType.BASIC);
+        for (Text line : tip) {
+            double p = parsePriceLine(line.getString());
+            if (p > 0) return p;
+        }
+        return -1;
+    }
+
+    private double parsePriceLine(String raw) {
+        Matcher m = PRICE_PATTERN.matcher(raw.replaceAll("§[0-9a-fk-orA-FK-OR]", ""));
+        if (m.find()) {
+            try {
+                double v = Double.parseDouble(m.group(1).replace(",", ""));
+                String s = m.group(2);
+                if (s != null) {
+                    switch (s.toUpperCase()) {
+                        case "K" -> v *= 1_000;
+                        case "M" -> v *= 1_000_000;
+                        case "B" -> v *= 1_000_000_000;
+                    }
+                }
+                if (v > 0) return v;
+            } catch (NumberFormatException ignored) {}
+        }
+        return -1;
+    }
+
+    private double calculateMinSellPrice(double orderPrice) {
+        return Math.ceil((orderPrice + minProfit) / (1.0 - (ahTaxPercent / 100.0)));
+    }
+
+    private double calculateNetProfit(double orderPrice, double ahSellPrice) {
+        return (ahSellPrice * (1.0 - (ahTaxPercent / 100.0))) - orderPrice;
+    }
+
+    private int findElytraInInventory(MinecraftClient client) {
+        for (int i = 0; i < 36; i++) {
+            ItemStack s = client.player.getInventory().getStack(i);
+            if (!s.isEmpty() && s.isOf(Items.ELYTRA)) return i;
+        }
+        return -1;
+    }
+
+    private void clickSlotIfOpen(MinecraftClient client, int slotId, SlotActionType type) {
+        if (client.currentScreen instanceof HandledScreen<?> s && client.interactionManager != null)
+            client.interactionManager.clickSlot(s.getScreenHandler().syncId, slotId, 0, type, client.player);
+    }
+
+    private void sendCommand(MinecraftClient client, String cmd) {
+        if (client.player != null && client.player.networkHandler != null)
+            client.player.networkHandler.sendChatCommand(cmd);
+    }
+
+    private void transition(BotState next, int min, int max, String status) {
+        this.state = next;
+        this.waitTicks = min + random.nextInt(Math.max(1, max - min + 1));
+        this.statusText = status;
+    }
+
+    private String formatMoney(double a) {
+        if (a >= 1_000_000_000) return String.format("%.2fB", a / 1_000_000_000);
+        if (a >= 1_000_000) return String.format("%.2fM", a / 1_000_000);
+        if (a >= 1_000) return String.format("%.1fK", a / 1_000);
+        return String.valueOf(Math.round(a));
+    }
+
+    private String toCommandPrice(double a) {
+        long r = Math.round(a);
+        return (r % 1_000_000 == 0) ? (r / 1_000_000) + "m" : String.valueOf(r);
+    }
+
+    private void logChat(MinecraftClient client, String msg) {
+        if (client.player != null) client.player.sendMessage(Text.literal("§6§l[ElytraFlip] §r" + msg), false);
+    }
+
+    private void registerCommands() {
+        ClientCommandRegistrationCallback.EVENT.register((d, r) -> d.register(ClientCommandManager.literal("elyflip")
+            .then(ClientCommandManager.literal("minprofit").then(ClientCommandManager.argument("m", DoubleArgumentType.doubleArg(0.1)).executes(c -> {
+                minProfit = DoubleArgumentType.getDouble(c, "m") * 1_000_000; return 1;
+            })))
+            .then(ClientCommandManager.literal("maxcapital").then(ClientCommandManager.argument("m", DoubleArgumentType.doubleArg(1)).executes(c -> {
+                maxCapital = DoubleArgumentType.getDouble(c, "m") * 1_000_000; return 1;
+            })))
+            .then(ClientCommandManager.literal("checktime").then(ClientCommandManager.argument("s", IntegerArgumentType.integer(5, 300)).executes(c -> {
+                checkIntervalSec = IntegerArgumentType.getInteger(c, "s"); return 1;
+            })))
+            .then(ClientCommandManager.literal("refreshtime").then(ClientCommandManager.argument("s", IntegerArgumentType.integer(15, 600)).executes(c -> {
+                refreshIntervalSec = IntegerArgumentType.getInteger(c, "s"); return 1;
+            })))
+            .then(ClientCommandManager.literal("reset").executes(c -> {
+                soldCount = 0; lastProfit = 0; totalProfit = 0; return 1;
+            }))
+        ));
+    }
+}
+// === HOAN TAT 100% ===
+                                                                                               
