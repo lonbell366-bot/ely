@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "elytraflip",
+  "version": "${version}",
+  "name": "Donut Elytra Auto Flip (1.21.4)",
+  "description": "Auto Order & Auto Sell Elytra trên AH kèm HUD thống kê vật phẩm & lợi nhuận",
+  "authors": ["You"],
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.donut.elytraflip.ElytraFlipClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.4",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
