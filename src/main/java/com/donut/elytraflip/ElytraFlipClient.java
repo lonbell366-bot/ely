@@ -16,12 +16,14 @@ import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ItemEnchantmentsComponent;
 import net.minecraft.component.type.LoreComponent;
+import net.minecraft.enchantment.Enchantment;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.item.tooltip.TooltipType;
-import net.minecraft.screen.slot.Slot;
+import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
@@ -35,7 +37,6 @@ import java.util.regex.Pattern;
 public class ElytraFlipClient implements ClientModInitializer {
     public static double minProfit = 2_000_000, maxCapital = 100_000_000_000.0, ahTaxPercent = 0.0;
     public static int orderQuantity = 1, checkIntervalSec = 15, refreshIntervalSec = 60, retryScanSec = 6;
-    // Tốc độ nhanh hơn: mặc định chỉ trễ ngẫu nhiên 5 - 9 ticks (0.25s - 0.45s)
     public static int minRandomTick = 5, maxRandomTick = 9;
 
     public static int slotYourOrdersBtn = 51;      // Rương "Your Orders"
@@ -102,7 +103,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 lastResumeTimeMs = System.currentTimeMillis();
                 isRecheckingMarket = false;
                 transition(BotState.SCAN_AH_OPEN, 3, 6, "§aĐang khởi động...");
-                logChat(client, "§aĐã BẬT Auto Flip (Tốc độ cao)! Lời >= §e" + formatMoney(minProfit));
+                logChat(client, "§aĐã BẬT Auto Flip! Chỉ đọc AH Elytra có Unbreaking III + Mending.");
             } else {
                 accumulatedActiveMs += (System.currentTimeMillis() - lastResumeTimeMs);
                 state = BotState.IDLE; statusText = "§cĐã Tắt";
@@ -175,7 +176,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                     return;
                 }
                 double netProfit = calculateNetProfit(highestOrderPrice, lowestAhPrice);
-                logChat(client, "§7Order cao nhất: §e" + formatMoney(highestOrderPrice) + " §7| AH thấp nhất: §a" + formatMoney(lowestAhPrice) + " §7| Lời: §b+" + formatMoney(netProfit));
+                logChat(client, "§7Order: §e" + formatMoney(highestOrderPrice) + " §7| AH (Unb3+Mend): §a" + formatMoney(lowestAhPrice) + " §7| Lời: §b+" + formatMoney(netProfit));
                 if (Math.round(netProfit) < Math.round(minProfit) || highestOrderPrice * orderQuantity > maxCapital) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
                     transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 10, "§eChưa đủ lời (Đợi " + retryScanSec + "s)");
@@ -254,7 +255,6 @@ public class ElytraFlipClient implements ClientModInitializer {
                 }
             }
             case MONITOR_WAIT -> {
-                // Nếu trong túi đã có sẵn Elytra thì đem bán ngay lập tức
                 if (findElytraInInventory(client) != -1) {
                     transition(BotState.SELL_SCAN_AH_OPEN, 3, 6, "§aCó Elytra! Đem bán AH...");
                     return;
@@ -267,7 +267,6 @@ public class ElytraFlipClient implements ClientModInitializer {
                     transition(BotState.CHECK_MY_ORDER_OPEN, 3, 6, "§bKiểm tra Your Orders...");
                 }
             }
-            // LUỒNG LẤY ELYTRA TỪ YOUR ORDERS KHI ĐƠN ĐÃ HOÀN THÀNH
             case CHECK_MY_ORDER_OPEN -> {
                 sendCommand(client, "order ely");
                 transition(BotState.CHECK_MY_ORDER_CLICK_YOURS, 8, 12, "§bMở Your Orders...");
@@ -290,19 +289,16 @@ public class ElytraFlipClient implements ClientModInitializer {
                         }
                         return;
                     }
-                    // Bấm vào ô Elytra trong Your Orders
                     clickSlotIfOpen(client, myElytraSlot, SlotActionType.PICKUP);
                     transitionFast(BotState.CHECK_MY_ORDER_TAKE_ELYTRA, "§bĐang lấy Elytra ra...");
                 }
             }
             case CHECK_MY_ORDER_TAKE_ELYTRA -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
-                    // Tìm nút Collect/Claim hoặc bấm trực tiếp vào Elytra để rút về túi đồ
                     int claimBtn = findSlotByName(client, "Claim", -1);
                     if (claimBtn == -1) claimBtn = findSlotByName(client, "Collect", -1);
                     if (claimBtn != -1) clickSlotIfOpen(client, claimBtn, SlotActionType.PICKUP);
 
-                    // Rút toàn bộ Elytra đang có trong giao diện đơn hàng về túi
                     int limit = Math.min(45, s.getScreenHandler().slots.size());
                     for (int i = 0; i < limit; i++) {
                         ItemStack st = s.getScreenHandler().getSlot(i).getStack();
@@ -315,7 +311,6 @@ public class ElytraFlipClient implements ClientModInitializer {
                 transitionFast(BotState.CHECK_MY_ORDER_VERIFY_INVENTORY, "§bKiểm tra túi đồ...");
             }
             case CHECK_MY_ORDER_VERIFY_INVENTORY -> {
-                // Nếu mở sang rương chứa vật phẩm hoàn thành thì rút nốt Elytra ra
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     int limit = Math.min(45, s.getScreenHandler().slots.size());
                     for (int i = 0; i < limit; i++) {
@@ -325,13 +320,11 @@ public class ElytraFlipClient implements ClientModInitializer {
                     }
                     client.player.closeHandledScreen();
                 }
-                // Nếu đã lấy được Elytra về túi -> Bán ngay lên AH!
                 if (findElytraInInventory(client) != -1) {
                     logChat(client, "§a§lĐã lấy Elytra từ Your Orders thành công! Chuyển sang bán AH...");
                     transition(BotState.SELL_SCAN_AH_OPEN, 5, 10, "§dChuẩn bị bán lên AH...");
                     return;
                 }
-                // Nếu chưa có ai bán vào đơn
                 if (monitorTicksElapsed >= refreshIntervalSec * 20) {
                     isRecheckingMarket = false;
                     transition(BotState.CANCEL_ORDER_OPEN, 5, 10, "§6Làm mới Order 60s...");
@@ -451,7 +444,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 // === HẾT PHẦN 2 - DÁN TIẾP PHẦN 3 NGAY BÊN DƯỚI ===
-                   private void renderHud(DrawContext ctx, RenderTickCounter tc) {
+                      private void renderHud(DrawContext ctx, RenderTickCounter tc) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.options.hudHidden) return;
         ctx.fill(6, 6, 215, 96, 0x90000000);
@@ -508,41 +501,59 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 
-    // Kiểm tra chuẩn Enchant Unbreaking III & Mending trên Minecraft 1.21.4
-    private boolean hasMatchingOrderEnchants(MinecraftClient client, ItemStack stack) {
+    // KIỂM TRA CHÍNH XÁC ELYTRA TRÊN AH PHẢI CÓ ĐỦ UNBREAKING III + MENDING (VÀ KHÔNG CÓ CURSE)
+    private boolean hasExactOrderEnchants(MinecraftClient client, ItemStack stack) {
         boolean hasUnb3 = false, hasMend = false;
-        String enchStr = String.valueOf(stack.get(DataComponentTypes.ENCHANTMENTS)).toLowerCase();
-        if (enchStr.contains("unbreaking") && (enchStr.contains("=3") || enchStr.contains(" 3") || enchStr.contains("iii"))) hasUnb3 = true;
-        if (enchStr.contains("mending")) hasMend = true;
 
+        // 1. Kiểm tra trực tiếp trong DataComponentTypes.ENCHANTMENTS của Minecraft 1.21.4
+        ItemEnchantmentsComponent enchComp = stack.get(DataComponentTypes.ENCHANTMENTS);
+        if (enchComp != null) {
+            for (RegistryEntry<Enchantment> entry : enchComp.getEnchantments()) {
+                String id = entry.getIdAsString().toLowerCase();
+                int lvl = enchComp.getLevel(entry);
+                if (id.contains("curse") || id.contains("vanishing") || id.contains("binding")) return false;
+                if (id.contains("unbreaking")) {
+                    if (lvl == 3) hasUnb3 = true;
+                    else return false; // Loại ngay nếu chỉ là Unbreaking I hoặc II
+                }
+                if (id.contains("mending") && lvl >= 1) hasMend = true;
+            }
+        }
+
+        // 2. Kiểm tra thêm từng dòng trong Lore và Tooltip
         Item.TooltipContext ctx = client.world != null ? Item.TooltipContext.create(client.world) : Item.TooltipContext.DEFAULT;
         for (Text line : stack.getTooltip(ctx, client.player, TooltipType.BASIC)) {
-            String plain = line.getString().replaceAll("§[0-9a-fk-orA-FK-OR]", "").toLowerCase();
-            if (plain.contains("unbreaking iii") || plain.contains("unbreaking 3") || plain.contains("chậm hỏng iii")) hasUnb3 = true;
-            if (plain.contains("mending") || plain.contains("sửa chữa")) hasMend = true;
+            String plain = line.getString().replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim().toLowerCase();
+            if (plain.contains("curse") || plain.contains("vanishing") || plain.contains("binding")) return false;
+            if (plain.matches(".*unbreaking\\s+(iii|3)\\b.*") || plain.contains("chậm hỏng iii")) {
+                hasUnb3 = true;
+            } else if (plain.matches(".*unbreaking\\s+(i|ii|1|2)\\b.*")) {
+                return false; // Loại ngay Unbreaking 1 và 2
+            }
+            if (plain.contains("mending") || plain.contains("sửa chữa")) {
+                hasMend = true;
+            }
         }
         return hasUnb3 && hasMend;
     }
 
-    // Đọc giá thấp nhất trên AH (Ưu tiên Elytra có Unbreaking III + Mending)
+    // CHỈ ĐỌC GIÁ ELYTRA TRÊN AH CÓ ĐÚNG ENCHANT UNBREAKING III + MENDING (ĐÃ XÓA BỎ LOWEST_ANY)
     private double scanAhLowestPrice(MinecraftClient client, HandledScreen<?> screen) {
-        double lowestEnchanted = -1, lowestAny = -1;
+        double lowestEnchanted = -1;
         int limit = Math.min(45, screen.getScreenHandler().slots.size());
         for (int i = 0; i < limit; i++) {
             ItemStack st = screen.getScreenHandler().getSlot(i).getStack();
             if (!st.isEmpty() && st.isOf(Items.ELYTRA)) {
+                if (!hasExactOrderEnchants(client, st)) continue; // Bỏ qua ngay nếu sai hoặc thiếu Enchant
                 double p = extractUnitPrice(client, st);
-                if (p <= 0) continue;
-                if (lowestAny < 0 || p < lowestAny) lowestAny = p;
-                if (hasMatchingOrderEnchants(client, st)) {
-                    if (lowestEnchanted < 0 || p < lowestEnchanted) lowestEnchanted = p;
+                if (p > 0 && (lowestEnchanted < 0 || p < lowestEnchanted)) {
+                    lowestEnchanted = p;
                 }
             }
         }
-        return lowestEnchanted > 0 ? lowestEnchanted : lowestAny;
+        return lowestEnchanted;
     }
 
-    // Đọc giá Order cao nhất trên /order ely
     private double scanOrderHighestPrice(MinecraftClient client, HandledScreen<?> screen) {
         double highest = -1;
         int limit = Math.min(45, screen.getScreenHandler().slots.size());
@@ -556,7 +567,6 @@ public class ElytraFlipClient implements ClientModInitializer {
         return highest;
     }
 
-    // Tách chính xác dòng giá 1 cái (Price / each), tuyệt đối không đọc nhầm dòng Total / Paid
     private double extractUnitPrice(MinecraftClient client, ItemStack stack) {
         Item.TooltipContext ctx = client.world != null ? Item.TooltipContext.create(client.world) : Item.TooltipContext.DEFAULT;
         List<Text> lines = stack.getTooltip(ctx, client.player, TooltipType.BASIC);
@@ -705,4 +715,4 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 }
 // === HOÀN TẤT 100% ===
-                            
+                
