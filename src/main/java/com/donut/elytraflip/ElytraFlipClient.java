@@ -35,11 +35,8 @@ import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
 
-import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -60,11 +57,14 @@ public class ElytraFlipClient implements ClientModInitializer {
     public static int slotEditOrderCollectBox = 13, slotEditOrderCancelBtn = 14, slotCancelOrderConfirmBtn = 16;
     public static int slotAhYourItemsBtn = 51, slotAhConfirmBtn = 11;
 
-    // Quản lý số lượng tài khoản được phép dùng Mod Phụ qua lệnh /elyflip sudung <số>
-    private static final int[] OWNER_ACC = {54, 53, 52, 45, 5, 48}; // lonw_j
-    public static int maxAllowedSubAccounts = 1;
-    private final List<String> activeSubUsers = new ArrayList<>();
-    private boolean slotConfigLoaded = false;
+    // Mã chống Crack: Ẩn tên chủ mod lonw_j và khóa toán học động authMagic
+    private static final int[] OWNER_ACC = {54, 53, 52, 45, 5, 48}; // lonw_j (XOR 90)
+    private static final int[] OK_SIG = {1, 31, 22, 3, 119, 27, 15, 14, 18, 96, 21, 17, 7}; // [ELY-AUTH:OK] (XOR 90)
+    private static final int[] LOCK_SIG = {1, 31, 22, 3, 119, 27, 15, 14, 18, 96, 22, 21, 25, 17, 7}; // [ELY-AUTH:LOCK] (XOR 90)
+    private static final int MAGIC_TARGET = 0x5A3C96E1;
+    private int authMagic = 0;
+    private boolean waitingMasterReply = false;
+    private int masterReplyTimeoutTicks = 0;
 
     private static KeyBinding toggleKey;
     private boolean running = false, hasActiveOrder = false, hasActiveAhListing = false;
@@ -106,7 +106,7 @@ public class ElytraFlipClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Bật/Tắt Auto Flip Elytra (Mod Chủ)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, "Donut Elytra Flip"
+                "Bật/Tắt Auto Flip Elytra", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, "Donut Elytra Flip"
         ));
         registerCommands();
         HudRenderCallback.EVENT.register(this::renderHud);
@@ -119,27 +119,37 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (message == null) return;
         String plain = message.getString().replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim();
         String lower = plain.toLowerCase();
+        String masterName = decodeXor(OWNER_ACC, 90);
 
-        // Tự động duyệt hoặc chặn Mod Phụ theo số lượng /elyflip sudung <số> (Không cần nhập mã Key)
-        if (plain.contains("[ELY-PING:")) {
-            int sIdx = plain.indexOf("[ELY-PING:") + 10;
-            int eIdx = plain.indexOf("]", sIdx);
-            if (sIdx > 9 && eIdx > sIdx) {
-                String reqUser = plain.substring(sIdx, eIdx).trim().toLowerCase();
+        // Chống giả mạo: Tin nhắn mở/khóa bắt buộc phải gửi từ đúng chủ mod lonw_j
+        if (lower.contains(masterName)) {
+            if (plain.contains(decodeXor(OK_SIG, 90))) {
                 MinecraftClient mc = MinecraftClient.getInstance();
-                if (isMasterOwner(mc) == 1 && mc.player != null && mc.player.networkHandler != null) {
-                    if (activeSubUsers.contains(reqUser) && activeSubUsers.indexOf(reqUser) < maxAllowedSubAccounts) {
-                        mc.player.networkHandler.sendChatCommand("msg " + reqUser + " [ELY-AUTH:OK]");
-                    } else if (activeSubUsers.size() < maxAllowedSubAccounts) {
-                        activeSubUsers.add(reqUser);
-                        saveSlotConfig(mc);
-                        mc.player.networkHandler.sendChatCommand("msg " + reqUser + " [ELY-AUTH:OK]");
-                        logChat(mc, "§a[Cấp Suất Tự Động] §eTài khoản §b" + reqUser + " §eđã nhận 1 suất dùng Mod Phụ (§a" + activeSubUsers.size() + "/" + maxAllowedSubAccounts + " acc§e)!");
-                    } else {
-                        mc.player.networkHandler.sendChatCommand("msg " + reqUser + " [ELY-AUTH:LOCK]");
-                        logChat(mc, "§c[Đã Chặn] §eTài khoản §b" + reqUser + " §emuốn dùng Mod Phụ nhưng đã hết suất (§c" + activeSubUsers.size() + "/" + maxAllowedSubAccounts + " acc§e)!");
-                    }
+                authMagic = computeDynamicAuthMagic(mc);
+                waitingMasterReply = false;
+                if (!running && computeAuthFactor(mc) == 1) {
+                    running = true;
+                    lastResumeTimeMs = System.currentTimeMillis();
+                    recentAhPrices.clear(); recentOrderPrices.clear();
+                    verifyingStabilityAfterPause = false; lastFailedOrderPrice = -1;
+                    logChat(mc, "§a§l[Đã Cấp Quyền] §eChủ Mod đã duyệt suất sử dụng! Đang khởi động...");
+                    restartCycleFromBeginning(mc, "§aĐang khởi động...");
                 }
+                return;
+            }
+            if (plain.contains(decodeXor(LOCK_SIG, 90))) {
+                MinecraftClient mc = MinecraftClient.getInstance();
+                authMagic = 0;
+                waitingMasterReply = false;
+                if (running) {
+                    accumulatedActiveMs += (System.currentTimeMillis() - lastResumeTimeMs);
+                    running = false;
+                }
+                state = BotState.IDLE;
+                statusText = "§cĐã Hết Suất / Bị Khóa!";
+                if (mc.currentScreen != null && mc.player != null) mc.player.closeHandledScreen();
+                logChat(mc, "§c§l[Bị Khóa] §eChủ Mod đã khóa hoặc đã hết suất sử dụng (/elyflip sudung)!");
+                return;
             }
         }
 
@@ -164,10 +174,8 @@ public class ElytraFlipClient implements ClientModInitializer {
                 if (soldPriceFromChat > 0) {
                     lastSaleRecordedMs = now;
                     recordAhSaleFromChat(MinecraftClient.getInstance(), soldPriceFromChat);
-                    hasActiveAhListing = false;
-                    hasActiveOrder = false;
-                    lastFailedOrderPrice = -1;
-                    chatAhSoldFlag = true;
+                    hasActiveAhListing = false; hasActiveOrder = false;
+                    lastFailedOrderPrice = -1; chatAhSoldFlag = true;
                 }
             }
         }
@@ -194,31 +202,39 @@ public class ElytraFlipClient implements ClientModInitializer {
 
     private void onClientTick(MinecraftClient client) {
         if (client.player == null || client.world == null) return;
-        if (!slotConfigLoaded) { slotConfigLoaded = true; loadSlotConfig(client); }
         if (cmdCooldownTicks > 0) cmdCooldownTicks--;
 
-        while (toggleKey.wasPressed()) {
-            if (isMasterOwner(client) != 1) {
-                running = false; state = BotState.IDLE; statusText = "§cKhông phải Chủ Mod!";
-                logChat(client, "§c§l[Cảnh Báo] §eĐây là bản §6MOD CHỦ§e! Chỉ chủ sở hữu mới có quyền sử dụng.");
-                return;
+        if (waitingMasterReply) {
+            if (--masterReplyTimeoutTicks <= 0) {
+                waitingMasterReply = false;
+                statusText = "§cChủ Mod chưa mở suất!";
+                logChat(client, "§c[Chưa Mở Suất] §eKhông nhận được phản hồi từ Chủ Mod (Chủ Mod đang Offline hoặc chưa bật /elyflip sudung)!");
             }
+        }
+
+        while (toggleKey.wasPressed()) {
             if (InputUtil.isKeyPressed(client.getWindow().getHandle(), GLFW.GLFW_KEY_LEFT_SHIFT)) {
                 soldCount = 0; lastProfit = 0; totalProfit = 0;
                 accumulatedActiveMs = 0; lastResumeTimeMs = System.currentTimeMillis();
             }
-            running = !running;
             if (running) {
-                lastResumeTimeMs = System.currentTimeMillis();
-                recentAhPrices.clear(); recentOrderPrices.clear();
-                verifyingStabilityAfterPause = false; lastFailedOrderPrice = -1;
-                restartCycleFromBeginning(client, "§aĐang khởi động...");
-            } else {
+                running = false;
                 accumulatedActiveMs += (System.currentTimeMillis() - lastResumeTimeMs);
                 state = BotState.IDLE; statusText = "§cĐã Tắt";
+                return;
             }
+            // Nếu chưa có khóa động từ Mod Chủ -> Tự động nhắn tin xin suất
+            if (computeAuthFactor(client) != 1) {
+                requestSlotFromMaster(client);
+                return;
+            }
+            running = true;
+            lastResumeTimeMs = System.currentTimeMillis();
+            recentAhPrices.clear(); recentOrderPrices.clear();
+            verifyingStabilityAfterPause = false; lastFailedOrderPrice = -1;
+            restartCycleFromBeginning(client, "§aĐang khởi động...");
         }
-        if (!running || state == BotState.IDLE || isMasterOwner(client) != 1) return;
+        if (!running || state == BotState.IDLE || computeAuthFactor(client) != 1) return;
 
         if (chatNotEnoughMoneyFlag) {
             chatNotEnoughMoneyFlag = false; hasActiveOrder = false;
@@ -259,7 +275,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (!tickScanAndCreateOrder(client)) tickMonitorClaimAndSell(client);
     }
 // === HẾT PHẦN 2 ===
-    private boolean tickScanAndCreateOrder(MinecraftClient client) {
+           private boolean tickScanAndCreateOrder(MinecraftClient client) {
         switch (state) {
             case PAUSE_VOLATILE_MARKET -> {
                 if (client.currentScreen != null) client.player.closeHandledScreen();
@@ -421,7 +437,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 return true;
             }
 // === HẾT PHẦN 3 ===
-                        case EVALUATE_INITIAL_PROFIT -> {
+                     case EVALUATE_INITIAL_PROFIT -> {
                 if (lowestAhPrice <= 0 || highestOrderPrice <= 0) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
                     transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 15, "§cĐợi quét lại...");
@@ -651,7 +667,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 // === HẾT PHẦN 4 ===
-             private void tickMonitorClaimAndSell(MinecraftClient client) {
+        private void tickMonitorClaimAndSell(MinecraftClient client) {
         switch (state) {
             case SUBMIT_SIGN_GUI -> {
                 if (client.currentScreen instanceof AbstractSignEditScreen signScreen) {
@@ -817,7 +833,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transitionHuman(BotState.MONITOR_AH_OPEN, "§aTiếp tục canh đơn...");
             }
 // === HẾT PHẦN 5 ===
-                      case CANCEL_ORDER_OPEN -> {
+                       case CANCEL_ORDER_OPEN -> {
                 if (client.currentScreen != null) {
                     client.player.closeHandledScreen();
                     transition(BotState.CANCEL_ORDER_OPEN, 8, 12, "§cĐóng bảng cũ...");
@@ -970,7 +986,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transitionHuman(BotState.SELL_SELECT_HOTBAR_SLOT, "§eThử gõ lại /ah sell...");
             }
 // === HẾT PHẦN 6 ===
-                case AH_MONITOR_WAIT -> {
+                   case AH_MONITOR_WAIT -> {
                 monitorTicksElapsed++;
                 int sec = monitorTicksElapsed / 20;
                 statusText = "§dChờ mua AH " + formatMoney(myListedAhPrice) + " (" + sec + "/" + refreshIntervalSec + "s)";
@@ -1068,41 +1084,57 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 
+    // LÕI CHỐNG CRACK THÔNG MINH CỦA MOD PHỤ (KHÓA HẰNG SỐ ĐỘNG & CHỐNG GIẢ MẠO)
     private String decodeXor(int[] arr, int xorKey) {
         char[] c = new char[arr.length];
         for (int i = 0; i < arr.length; i++) c[i] = (char) (arr[i] ^ xorKey);
         return new String(c);
     }
 
-    private int isMasterOwner(MinecraftClient client) {
+    private int computeDynamicAuthMagic(MinecraftClient client) {
         if (client == null || client.player == null || client.getSession() == null) return 0;
-        String sessionUser = client.getSession().getUsername().toLowerCase().trim();
-        String playerUser = client.player.getName().getString().toLowerCase().trim();
-        if (!sessionUser.equals(playerUser)) return 0;
-        return playerUser.equals(decodeXor(OWNER_ACC, 90)) ? 1 : 0;
+        String sName = client.getSession().getUsername().toLowerCase().trim();
+        String pName = client.player.getName().getString().toLowerCase().trim();
+        if (!sName.equals(pName)) return 0; // Chặn mod đổi tên giả mạo
+        for (StackTraceElement el : Thread.currentThread().getStackTrace()) {
+            String cn = el.getClassName().toLowerCase();
+            if (cn.contains("recaf") || cn.contains("xposed") || cn.contains("frida")) return 0;
+        }
+        return MAGIC_TARGET ^ (pName.hashCode() & 0xFFFF);
     }
 
-    private void saveSlotConfig(MinecraftClient client) {
-        try {
-            File f = new File(client.runDirectory, "config/elyflip_slots.dat");
-            f.getParentFile().mkdirs();
-            List<String> lines = new ArrayList<>();
-            lines.add("MAX:" + maxAllowedSubAccounts);
-            for (String u : activeSubUsers) lines.add("USER:" + u);
-            Files.write(f.toPath(), lines, StandardCharsets.UTF_8);
-        } catch (Exception ignored) {}
+    // Hệ số toán học (1 = Đã được Mod Chủ duyệt, 0 = Chưa duyệt hoặc bị Crack)
+    private int computeAuthFactor(MinecraftClient client) {
+        if (client == null || client.player == null || client.getSession() == null) return 0;
+        String sName = client.getSession().getUsername().toLowerCase().trim();
+        String pName = client.player.getName().getString().toLowerCase().trim();
+        if (!sName.equals(pName)) return 0;
+        if (pName.equals(decodeXor(OWNER_ACC, 90))) {
+            authMagic = MAGIC_TARGET ^ (pName.hashCode() & 0xFFFF);
+            return 1;
+        }
+        int expected = MAGIC_TARGET ^ (pName.hashCode() & 0xFFFF);
+        return ((authMagic ^ expected) == 0 && authMagic != 0) ? 1 : 0;
     }
 
-    private void loadSlotConfig(MinecraftClient client) {
-        try {
-            File f = new File(client.runDirectory, "config/elyflip_slots.dat");
-            if (!f.exists()) return;
-            activeSubUsers.clear();
-            for (String line : Files.readAllLines(f.toPath(), StandardCharsets.UTF_8)) {
-                if (line.startsWith("MAX:")) maxAllowedSubAccounts = Integer.parseInt(line.substring(4).trim());
-                else if (line.startsWith("USER:")) activeSubUsers.add(line.substring(5).trim().toLowerCase());
-            }
-        } catch (Exception ignored) {}
+    // Giải mã vị trí ô rương bằng authMagic: nếu bị crack (authMagic sai), mọi slot sẽ lệch sang số rác!
+    private int unmaskSlot(MinecraftClient client, int rawSlot) {
+        if (client == null || client.player == null) return -1;
+        String pName = client.player.getName().getString().toLowerCase().trim();
+        int expected = MAGIC_TARGET ^ (pName.hashCode() & 0xFFFF);
+        int drift = (authMagic ^ expected) & 0x3F;
+        return (computeAuthFactor(client) == 1) ? (rawSlot ^ drift) : -1;
+    }
+
+    private void requestSlotFromMaster(MinecraftClient client) {
+        if (client.player == null || client.player.networkHandler == null) return;
+        String myName = client.player.getName().getString().toLowerCase().trim();
+        String masterName = decodeXor(OWNER_ACC, 90);
+        waitingMasterReply = true;
+        masterReplyTimeoutTicks = 120; // Đợi phản hồi 6 giây
+        statusText = "§eĐang xin suất từ Chủ Mod...";
+        client.player.networkHandler.sendChatCommand("msg " + masterName + " [ELY-PING:" + myName + "]");
+        logChat(client, "§eĐang kiểm tra suất sử dụng với Chủ Mod (§b" + masterName + "§e)... Vui lòng chờ 2 giây!");
     }
 
     private double getPlayerBalance(MinecraftClient client) {
@@ -1166,7 +1198,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         return largeJumps >= 2 || ((maxP - minP) >= 20_000_000 && largeJumps >= 1);
     }
 // === HẾT PHẦN 7 ===
-        private int countAhElytraAtOrBelow(MinecraftClient client, HandledScreen<?> screen, double targetOrderPrice) {
+            private int countAhElytraAtOrBelow(MinecraftClient client, HandledScreen<?> screen, double targetOrderPrice) {
         int count = 0;
         long targetRounded = Math.round(targetOrderPrice);
         int limit = Math.min(45, screen.getScreenHandler().slots.size());
@@ -1209,12 +1241,13 @@ public class ElytraFlipClient implements ClientModInitializer {
         ctx.fill(6, 6, 245, 96, 0x90000000);
         ctx.fill(6, 6, 245, 8, running ? 0xFF55FF55 : 0xFFFF5555);
         double avg = soldCount > 0 ? (totalProfit / soldCount) : 0;
-        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§6§lAUTO FLIP §e[MOD CHỦ - ADMIN]"), 12, 12, 0xFFFFFF);
+        String authBadge = (computeAuthFactor(client) == 1) ? "§a[Đã Cấp Suất]" : "§c[Chưa Cấp Suất]";
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§6§lAUTO FLIP ELYTRA " + authBadge), 12, 12, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§7Trạng thái: " + statusText), 12, 24, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fĐã bán: §b§l" + soldCount + " cái §7| Gần nhất: §a+" + formatMoney(lastProfit)), 12, 36, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fTổng lời: §e§l+" + formatMoney(totalProfit) + " §7(TB: " + formatMoney(avg) + ")"), 12, 48, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fTiền lời / 1h: §d§l+" + formatMoney(getProfitPerHour()) + "/h"), 12, 60, 0xFFFFFF);
-        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§7TG: §f" + getActiveTimeFormatted() + " §7| Cho phép: §a" + activeSubUsers.size() + "/" + maxAllowedSubAccounts + " acc"), 12, 72, 0xFFFFFF);
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§7TG chạy: §f" + getActiveTimeFormatted() + " §7| Tick: " + minRandomTick + "-" + maxRandomTick), 12, 72, 0xFFFFFF);
     }
 
     private int findEmptyHotbarSlot(MinecraftClient client) {
@@ -1287,6 +1320,7 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 
     private void fillAndCloseSign(MinecraftClient client, AbstractSignEditScreen signScreen, String line1) {
+        if (computeAuthFactor(client) != 1) return;
         try {
             SignBlockEntity signEntity = null; String[] messages = null; boolean front = true;
             for (Field f : AbstractSignEditScreen.class.getDeclaredFields()) {
@@ -1357,16 +1391,16 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 
     private double extractUnitPrice(MinecraftClient client, ItemStack stack) {
-        int mask = isMasterOwner(client);
-        if (mask != 1) return -1;
+        int factor = computeAuthFactor(client);
+        if (factor != 1) return -1;
         double fallback = -1;
         for (String line : getAllItemTextLines(client, stack)) {
             String plain = line.toLowerCase();
             if (plain.contains("paid") || plain.contains("total") || plain.contains("seller") || plain.contains("expire")) continue;
             double p = parsePriceLine(plain);
             if (p > 0) {
-                if (plain.contains("each") || plain.contains("price") || plain.contains("/item") || plain.contains("giá")) return p * mask;
-                if (fallback < 0) fallback = p * mask;
+                if (plain.contains("each") || plain.contains("price") || plain.contains("/item") || plain.contains("giá")) return p * factor;
+                if (fallback < 0) fallback = p * factor;
             }
         }
         return fallback;
@@ -1426,13 +1460,13 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 
     private void clickSlotIfOpen(MinecraftClient client, int slotId, SlotActionType type) {
-        if (isMasterOwner(client) != 1) return;
-        if (slotId >= 0 && client.currentScreen instanceof HandledScreen<?> s && client.interactionManager != null)
-            client.interactionManager.clickSlot(s.getScreenHandler().syncId, slotId, 0, type, client.player);
+        int realSlot = unmaskSlot(client, slotId);
+        if (realSlot >= 0 && client.currentScreen instanceof HandledScreen<?> s && client.interactionManager != null)
+            client.interactionManager.clickSlot(s.getScreenHandler().syncId, realSlot, 0, type, client.player);
     }
 
     private boolean sendCommandSafe(MinecraftClient client, String cmd) {
-        if (isMasterOwner(client) != 1 || cmdCooldownTicks > 0) return false;
+        if (computeAuthFactor(client) != 1 || cmdCooldownTicks > 0) return false;
         if (client.player != null && client.player.networkHandler != null) {
             client.player.networkHandler.sendChatCommand(cmd);
             cmdCooldownTicks = 28 + random.nextInt(10);
@@ -1465,31 +1499,11 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 
     private void logChat(MinecraftClient client, String msg) {
-        if (client.player != null) client.player.sendMessage(Text.literal("§6§l[ModChủ] §r" + msg), false);
+        if (client.player != null) client.player.sendMessage(Text.literal("§6§l[ElytraFlip] §r" + msg), false);
     }
 
     private void registerCommands() {
         ClientCommandRegistrationCallback.EVENT.register((d, r) -> d.register(ClientCommandManager.literal("elyflip")
-            .then(ClientCommandManager.literal("sudung").then(ClientCommandManager.argument("so_acc", IntegerArgumentType.integer(0, 100)).executes(c -> {
-                MinecraftClient mc = MinecraftClient.getInstance();
-                if (isMasterOwner(mc) != 1) return 0;
-                int count = IntegerArgumentType.getInteger(c, "so_acc");
-                maxAllowedSubAccounts = count;
-                if (count == 0) {
-                    for (String u : activeSubUsers) {
-                        if (mc.player != null && mc.player.networkHandler != null) mc.player.networkHandler.sendChatCommand("msg " + u + " [ELY-AUTH:LOCK]");
-                    }
-                    activeSubUsers.clear();
-                } else {
-                    while (activeSubUsers.size() > count) {
-                        String removed = activeSubUsers.remove(activeSubUsers.size() - 1);
-                        if (mc.player != null && mc.player.networkHandler != null) mc.player.networkHandler.sendChatCommand("msg " + removed + " [ELY-AUTH:LOCK]");
-                    }
-                }
-                saveSlotConfig(mc);
-                logChat(mc, "§a§l[Quản Lý Suất] §eĐã đặt số tài khoản được phép sử dụng Mod Phụ là: §b§l" + maxAllowedSubAccounts + " acc §e(Đang dùng: §a" + activeSubUsers.size() + "/" + maxAllowedSubAccounts + "§e)");
-                return 1;
-            })))
             .then(ClientCommandManager.literal("minprofit").then(ClientCommandManager.argument("m", DoubleArgumentType.doubleArg(0.1)).executes(c -> {
                 minProfit = DoubleArgumentType.getDouble(c, "m") * 1_000_000; return 1;
             })))
@@ -1520,5 +1534,5 @@ public class ElytraFlipClient implements ClientModInitializer {
         ));
     }
 }
-// === HOÀN TẤT 100% MOD CHỦ ===
-                
+// === HOÀN TẤT 100% MOD PHỤ ===
+            
