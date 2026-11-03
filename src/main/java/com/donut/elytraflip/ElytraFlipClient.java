@@ -238,7 +238,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (!tickScanAndCreateOrder(client)) tickMonitorClaimAndSell(client);
     }
 // === HẾT PHẦN 2 ===
-                private boolean tickScanAndCreateOrder(MinecraftClient client) {
+    private boolean tickScanAndCreateOrder(MinecraftClient client) {
         switch (state) {
             case PAUSE_VOLATILE_MARKET -> {
                 if (client.currentScreen != null) client.player.closeHandledScreen();
@@ -358,7 +358,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 return true;
             }
 // === HẾT PHẦN 3 ===
-                                     case EVALUATE_INITIAL_PROFIT -> {
+                        case EVALUATE_INITIAL_PROFIT -> {
                 if (lowestAhPrice <= 0 || highestOrderPrice <= 0) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
                     transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 15, "§cĐợi quét lại...");
@@ -555,7 +555,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 // === HẾT PHẦN 4 ===
-        private void tickMonitorClaimAndSell(MinecraftClient client) {
+               private void tickMonitorClaimAndSell(MinecraftClient client) {
         switch (state) {
             case SUBMIT_SIGN_GUI -> {
                 if (client.currentScreen instanceof AbstractSignEditScreen signScreen) {
@@ -760,7 +760,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transitionHuman(BotState.CANCEL_ORDER_OPEN, statusText);
             }
 // === HẾT PHẦN 5 ===
-                          case SELL_SCAN_AH_OPEN -> {
+                       case SELL_SCAN_AH_OPEN -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.SELL_SCAN_AH_OPEN, 8, 12, "§dĐóng bảng cũ..."); return; }
                 if (!sendCommandSafe(client, "ah ely")) { transition(BotState.SELL_SCAN_AH_OPEN, 6, 10, "§dĐợi nhịp lệnh..."); return; }
                 resetAhPagination(); guiWaitRetries = 0; transitionHuman(BotState.SELL_SCAN_AH_READ, "§dQuét giá AH để bán...");
@@ -901,8 +901,8 @@ public class ElytraFlipClient implements ClientModInitializer {
             default -> {}
         }
     }
-
-    private boolean isAhPageLoaded(HandledScreen<?> screen) {
+// === HẾT PHẦN 6A - DÁN TIẾP PHẦN 6B NGAY DƯỚI DÒNG NÀY ===
+        private boolean isAhPageLoaded(HandledScreen<?> screen) {
         int size = screen.getScreenHandler().slots.size();
         if (size > 53 && !screen.getScreenHandler().getSlot(53).getStack().isEmpty()) return true;
         if (size > 49 && !screen.getScreenHandler().getSlot(49).getStack().isEmpty()) return true;
@@ -1063,4 +1063,257 @@ public class ElytraFlipClient implements ClientModInitializer {
         double base = myOrderPrice > 0 ? myOrderPrice : (highestOrderPrice > 0 ? highestOrderPrice : actualSoldPrice - minProfit);
         soldCount++; lastProfit = calculateNetProfit(base, actualSoldPrice); totalProfit += lastProfit;
         hasActiveOrder = false; hasActiveAhListing = false;
-        logChat(client, "§a§l[CÓ NGƯỜI MUA AH] §eOrder: " + formatMoney(base) + " §7-> §aBán: " + formatMoney(actualSoldPrice) + " §7| Lời: §b+" + forma  
+        logChat(client, "§a§l[CÓ NGƯỜI MUA AH] §eOrder: " + formatMoney(base) + " §7-> §aBán: " + formatMoney(actualSoldPrice) + " §7| Lời: §b+" + formatMoney(lastProfit));
+    }
+// === HẾT PHẦN 6B - DÁN TIẾP PHẦN 6C NGAY DƯỚI DÒNG NÀY ===
+                private double parseAmountWithSuffix(String numPart, String suffixPart) {
+        try {
+            double v = Double.parseDouble(numPart.replace(",", ""));
+            if (suffixPart != null) switch (suffixPart.toUpperCase()) {
+                case "K" -> v *= 1_000; case "M" -> v *= 1_000_000; case "B" -> v *= 1_000_000_000;
+            }
+            return Math.round(v);
+        } catch (NumberFormatException e) { return -1; }
+    }
+
+    private void renderHud(DrawContext ctx, RenderTickCounter tc) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player == null || client.options.hudHidden) return;
+        ctx.fill(6, 6, 248, 96, 0x90000000);
+        ctx.fill(6, 6, 248, 8, running ? 0xFF55FF55 : 0xFFFF5555);
+        double avg = soldCount > 0 ? (totalProfit / soldCount) : 0;
+        String owner = currentOwnerName.isEmpty() ? client.player.getName().getString() : currentOwnerName;
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§6§lMOD CHỦ §e[Chủ: §b" + owner + "§e]"), 12, 12, 0xFFFFFF);
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§7Trạng thái: " + statusText), 12, 24, 0xFFFFFF);
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fĐã bán: §b§l" + soldCount + " cái §7| Gần nhất: §a+" + formatMoney(lastProfit)), 12, 36, 0xFFFFFF);
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fTổng lời: §e§l+" + formatMoney(totalProfit) + " §7(TB: " + formatMoney(avg) + ")"), 12, 48, 0xFFFFFF);
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fTiền lời / 1h: §d§l+" + formatMoney(getProfitPerHour()) + "/h"), 12, 60, 0xFFFFFF);
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§7TG: §f" + getActiveTimeFormatted() + " §7| Cho phép: §a" + activeSubUsers.size() + "/" + maxAllowedSubAccounts + " acc"), 12, 72, 0xFFFFFF);
+    }
+
+    private int findEmptyHotbarSlot(MinecraftClient client) {
+        for (int i = 0; i < 9; i++) if (client.player.getInventory().getStack(i).isEmpty()) return i;
+        return 8;
+    }
+
+    private boolean hasAnyElytraWithPrice(MinecraftClient client, HandledScreen<?> screen) {
+        int limit = Math.min(45, screen.getScreenHandler().slots.size());
+        for (int i = 0; i < limit; i++) {
+            ItemStack st = screen.getScreenHandler().getSlot(i).getStack();
+            if (!st.isEmpty() && st.isOf(Items.ELYTRA) && extractUnitPrice(client, st) > 0) return true;
+        }
+        return false;
+    }
+
+    private List<String> getAllItemTextLines(MinecraftClient client, ItemStack stack) {
+        List<String> result = new ArrayList<>();
+        LoreComponent lore = stack.get(DataComponentTypes.LORE);
+        if (lore != null) for (Text t : lore.lines()) result.add(t.getString().replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim());
+        Item.TooltipContext ctx = client.world != null ? Item.TooltipContext.create(client.world) : Item.TooltipContext.DEFAULT;
+        for (Text t : stack.getTooltip(ctx, client.player, TooltipType.BASIC)) result.add(t.getString().replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim());
+        return result;
+    }
+
+    private boolean isOrderDeliveredInList(MinecraftClient client, ItemStack stack) {
+        for (String line : getAllItemTextLines(client, stack)) {
+            String plain = line.toLowerCase();
+            if (plain.contains("order completed") || plain.contains("1/1 delivered")) return true;
+        }
+        return false;
+    }
+
+    private double getProfitPerHour() {
+        long activeMs = accumulatedActiveMs + (running ? (System.currentTimeMillis() - lastResumeTimeMs) : 0);
+        return (activeMs < 5000 || totalProfit <= 0) ? 0 : totalProfit / (activeMs / 3_600_000.0);
+    }
+
+    private String getActiveTimeFormatted() {
+        long s = (accumulatedActiveMs + (running ? (System.currentTimeMillis() - lastResumeTimeMs) : 0)) / 1000;
+        return String.format("%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60);
+    }
+
+    private void prepareSignSubmission(String txt, BotState next) {
+        this.pendingSignText = txt; this.nextStateAfterSign = next;
+        this.guiWaitRetries = 0; this.state = BotState.SUBMIT_SIGN_GUI;
+        this.waitTicks = minRandomTick + random.nextInt(Math.max(1, maxRandomTick - minRandomTick + 1));
+    }
+
+    private void fillAndCloseSign(MinecraftClient client, AbstractSignEditScreen signScreen, String line1) {
+        try {
+            SignBlockEntity signEntity = null; String[] messages = null; boolean front = true;
+            for (Field f : AbstractSignEditScreen.class.getDeclaredFields()) {
+                f.setAccessible(true);
+                if (SignBlockEntity.class.isAssignableFrom(f.getType())) signEntity = (SignBlockEntity) f.get(signScreen);
+                else if (f.getType() == String[].class) messages = (String[]) f.get(signScreen);
+                else if (f.getType() == boolean.class) front = f.getBoolean(signScreen);
+            }
+            if (messages != null && messages.length > 0) messages[0] = line1;
+            if (client.getNetworkHandler() != null && signEntity != null) {
+                String l2 = (messages != null && messages.length > 1 && messages[1] != null) ? messages[1] : "";
+                String l3 = (messages != null && messages.length > 2 && messages[2] != null) ? messages[2] : "";
+                String l4 = (messages != null && messages.length > 3 && messages[3] != null) ? messages[3] : "";
+                client.getNetworkHandler().sendPacket(new UpdateSignC2SPacket(signEntity.getPos(), front, line1, l2, l3, l4));
+            }
+            signScreen.close();
+        } catch (Exception e) { signScreen.close(); }
+    }
+
+    private boolean hasExactOrderEnchants(MinecraftClient client, ItemStack stack) {
+        boolean hasUnb3 = false, hasMend = false;
+        ItemEnchantmentsComponent enchComp = stack.get(DataComponentTypes.ENCHANTMENTS);
+        if (enchComp != null) {
+            for (RegistryEntry<Enchantment> entry : enchComp.getEnchantments()) {
+                String id = entry.getIdAsString().toLowerCase(); int lvl = enchComp.getLevel(entry);
+                if (id.contains("curse") || id.contains("vanishing") || id.contains("binding")) return false;
+                if (id.contains("unbreaking")) { if (lvl == 3) hasUnb3 = true; else return false; }
+                if (id.contains("mending") && lvl >= 1) hasMend = true;
+            }
+        }
+        for (String line : getAllItemTextLines(client, stack)) {
+            String plain = line.toLowerCase();
+            if (plain.contains("curse") || plain.contains("vanishing") || plain.contains("binding")) return false;
+            if (plain.matches(".*unbreaking\\s+(iii|3)\\b.*") || plain.contains("chậm hỏng iii")) hasUnb3 = true;
+            else if (plain.matches(".*unbreaking\\s+(i|ii|1|2)\\b.*")) return false;
+            if (plain.contains("mending") || plain.contains("sửa chữa")) hasMend = true;
+        }
+        return hasUnb3 && hasMend;
+    }
+
+    private double scanAhLowestPrice(MinecraftClient client, HandledScreen<?> screen) {
+        double low = -1; int limit = Math.min(45, screen.getScreenHandler().slots.size());
+        for (int i = 0; i < limit; i++) {
+            ItemStack st = screen.getScreenHandler().getSlot(i).getStack();
+            if (!st.isEmpty() && st.isOf(Items.ELYTRA) && hasExactOrderEnchants(client, st)) {
+                double p = extractUnitPrice(client, st);
+                if (p > 0 && (low < 0 || p < low)) low = p;
+            }
+        }
+        return low;
+    }
+
+    private double scanOrderHighestPrice(MinecraftClient client, HandledScreen<?> screen) {
+        double highEnch = -1, highAny = -1; int limit = Math.min(45, screen.getScreenHandler().slots.size());
+        for (int i = 0; i < limit; i++) {
+            ItemStack st = screen.getScreenHandler().getSlot(i).getStack();
+            if (!st.isEmpty() && st.isOf(Items.ELYTRA)) {
+                double p = extractUnitPrice(client, st);
+                if (p > 0) { if (p > highAny) highAny = p; if (hasExactOrderEnchants(client, st) && p > highEnch) highEnch = p; }
+            }
+        }
+        return highEnch > 0 ? highEnch : highAny;
+    }
+
+    private double extractUnitPrice(MinecraftClient client, ItemStack stack) {
+        int factor = computeAuthFactor(client);
+        if (factor != 1) return -1;
+        double fallback = -1;
+        for (String line : getAllItemTextLines(client, stack)) {
+            String plain = line.toLowerCase();
+            if (plain.contains("paid") || plain.contains("total") || plain.contains("seller") || plain.contains("expire")) continue;
+            double p = parsePriceLine(plain);
+            if (p > 0) {
+                if (plain.contains("each") || plain.contains("price") || plain.contains("/item") || plain.contains("giá")) return p * factor;
+                if (fallback < 0) fallback = p * factor;
+            }
+        }
+        return fallback;
+    }
+
+    private double parsePriceLine(String raw) {
+        Matcher m = PRICE_PATTERN.matcher(raw); double best = -1;
+        while (m.find()) { double v = parseAmountWithSuffix(m.group(1), m.group(2)); if (v > best) best = v; }
+        return best;
+    }
+
+    private boolean needsAmountInput(MinecraftClient client) {
+        if (!(client.currentScreen instanceof HandledScreen<?> s) || slotSetAmountBtn >= s.getScreenHandler().slots.size()) return false;
+        ItemStack stack = s.getScreenHandler().getSlot(slotSetAmountBtn).getStack();
+        if (stack.isEmpty()) return false;
+        for (String line : getAllItemTextLines(client, stack)) if (line.contains("(0)")) return true;
+        return false;
+    }
+
+    private int findSlotByName(MinecraftClient client, String keyword, int fallbackSlot) {
+        if (!(client.currentScreen instanceof HandledScreen<?> s)) return fallbackSlot;
+        int limit = Math.min(54, s.getScreenHandler().slots.size());
+        for (int i = 0; i < limit; i++) {
+            ItemStack st = s.getScreenHandler().getSlot(i).getStack();
+            if (!st.isEmpty() && st.getName().getString().toLowerCase().contains(keyword.toLowerCase())) return i;
+        }
+        return fallbackSlot;
+    }
+
+    private int findActiveElytraOrderSlot(HandledScreen<?> s) {
+        int limit = Math.min(45, s.getScreenHandler().slots.size());
+        for (int i = 0; i < limit; i++) if (s.getScreenHandler().getSlot(i).getStack().isOf(Items.ELYTRA)) return i;
+        return -1;
+    }
+
+    private double calculateCustomSellPrice(double orderPrice, double targetProfit) { return Math.ceil((orderPrice + targetProfit) / (1.0 - (ahTaxPercent / 100.0))); }
+    private double calculateNetProfit(double orderPrice, double ahSellPrice) { return Math.round((ahSellPrice * (1.0 - (ahTaxPercent / 100.0))) - orderPrice); }
+
+    private int findElytraInInventory(MinecraftClient client) {
+        for (int i = 0; i < 36; i++) if (client.player.getInventory().getStack(i).isOf(Items.ELYTRA)) return i;
+        return -1;
+    }
+
+    private void clickSlotIfOpen(MinecraftClient client, int slotId, SlotActionType type) {
+        int realSlot = unmaskSlot(client, slotId);
+        if (realSlot >= 0 && client.currentScreen instanceof HandledScreen<?> s && client.interactionManager != null)
+            client.interactionManager.clickSlot(s.getScreenHandler().syncId, realSlot, 0, type, client.player);
+    }
+
+    private boolean sendCommandSafe(MinecraftClient client, String cmd) {
+        if (cmdCooldownTicks > 0) return false;
+        if (client.player != null && client.player.networkHandler != null) {
+            client.player.networkHandler.sendChatCommand(cmd);
+            cmdCooldownTicks = 28 + random.nextInt(10); return true;
+        }
+        return false;
+    }
+
+    private void transitionHuman(BotState next, String status) {
+        int extra = (random.nextInt(6) == 0) ? random.nextInt(4) : 0;
+        transition(next, minRandomTick + extra, maxRandomTick + extra, status);
+    }
+
+    private void transition(BotState next, int min, int max, String status) {
+        this.state = next; this.waitTicks = min + random.nextInt(Math.max(1, max - min + 1)); this.statusText = status;
+    }
+
+    private String formatMoney(double a) {
+        if (a >= 1_000_000_000) return String.format("%.2fB", a / 1_000_000_000);
+        if (a >= 1_000_000) return String.format("%.2fM", a / 1_000_000);
+        if (a >= 1_000) return String.format("%.1fK", a / 1_000);
+        return String.valueOf(Math.round(a));
+    }
+
+    private String toCommandPrice(double a) { long r = Math.round(a); return (r % 1_000_000 == 0) ? (r / 1_000_000) + "m" : String.valueOf(r); }
+    private void logChat(MinecraftClient client, String msg) { if (client.player != null) client.player.sendMessage(Text.literal("§6§l[ModChủ] §r" + msg), false); }
+
+    private void registerCommands() {
+        ClientCommandRegistrationCallback.EVENT.register((d, r) -> d.register(ClientCommandManager.literal("elyflip")
+            .then(ClientCommandManager.literal("sudung").then(ClientCommandManager.argument("so_acc", IntegerArgumentType.integer(0, 100)).executes(c -> {
+                MinecraftClient mc = MinecraftClient.getInstance();
+                bindCurrentAccountAsMaster(mc);
+                maxAllowedSubAccounts = IntegerArgumentType.getInteger(c, "so_acc");
+                if (maxAllowedSubAccounts == 0) activeSubUsers.clear();
+                else while (activeSubUsers.size() > maxAllowedSubAccounts) activeSubUsers.remove(activeSubUsers.size() - 1);
+                saveSlotConfig(mc);
+                logChat(mc, "§a§l[Chủ Mod: " + currentOwnerName + "] §eĐã đặt số tài khoản được phép sử dụng là: §b§l" + maxAllowedSubAccounts + " acc");
+                return 1;
+            })))
+            .then(ClientCommandManager.literal("minprofit").then(ClientCommandManager.argument("m", DoubleArgumentType.doubleArg(0.1)).executes(c -> { minProfit = DoubleArgumentType.getDouble(c, "m") * 1_000_000; return 1; })))
+            .then(ClientCommandManager.literal("maxcapital").then(ClientCommandManager.argument("m", DoubleArgumentType.doubleArg(1)).executes(c -> { maxCapital = DoubleArgumentType.getDouble(c, "m") * 1_000_000; return 1; })))
+            .then(ClientCommandManager.literal("checktime").then(ClientCommandManager.argument("s", IntegerArgumentType.integer(5, 300)).executes(c -> { checkIntervalSec = IntegerArgumentType.getInteger(c, "s"); return 1; })))
+            .then(ClientCommandManager.literal("ahchecktime").then(ClientCommandManager.argument("s", IntegerArgumentType.integer(5, 300)).executes(c -> { ahYourItemsCheckSec = IntegerArgumentType.getInteger(c, "s"); return 1; })))
+            .then(ClientCommandManager.literal("refreshtime").then(ClientCommandManager.argument("s", IntegerArgumentType.integer(15, 600)).executes(c -> { refreshIntervalSec = IntegerArgumentType.getInteger(c, "s"); return 1; })))
+            .then(ClientCommandManager.literal("randomtick").then(ClientCommandManager.argument("min", IntegerArgumentType.integer(4, 100)).then(ClientCommandManager.argument("max", IntegerArgumentType.integer(6, 200)).executes(c -> {
+                minRandomTick = IntegerArgumentType.getInteger(c, "min"); maxRandomTick = Math.max(minRandomTick + 1, IntegerArgumentType.getInteger(c, "max")); return 1;
+            }))))
+            .then(ClientCommandManager.literal("reset").executes(c -> { soldCount = 0; lastProfit = 0; totalProfit = 0; accumulatedActiveMs = 0; lastResumeTimeMs = System.currentTimeMillis(); return 1; }))
+        ));
+    }
+}
+// === HOÀN TẤT 100% ===
+                                                            
