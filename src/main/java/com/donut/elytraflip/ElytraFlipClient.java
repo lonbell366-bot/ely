@@ -46,10 +46,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class ElytraFlipClient implements ClientModInitializer {
+    public static String ahSearchCmd = "ah elytra mending";
     public static double minProfit = 2_000_000, stopLossReduction = 1_000_000;
     public static double outbidSpreadThreshold = 3_000_000, outbidStep = 1_000_000;
     public static double maxCapital = 100_000_000_000.0, ahTaxPercent = 0.0;
-    public static int stopLossCompetitorCount = 3, minElytraPerPage = 3;
+    public static int stopLossCompetitorCount = 3;
     public static int orderQuantity = 1, checkIntervalSec = 8, ahYourItemsCheckSec = 30;
     public static int refreshIntervalSec = 60, retryScanSec = 8, volatilePauseSec = 300;
     public static int minRandomTick = 9, maxRandomTick = 13;
@@ -59,7 +60,7 @@ public class ElytraFlipClient implements ClientModInitializer {
     public static int slotEnchantMending = 19, slotConfirmEnchant = 52, slotSetAmountBtn = 13;
     public static int slotSetPriceBtn = 14, slotConfirmNewOrder = 16;
     public static int slotEditOrderCollectBox = 13, slotEditOrderCancelBtn = 14, slotCancelOrderConfirmBtn = 16;
-    public static int slotAhYourItemsBtn = 51, slotAhConfirmBtn = 11, slotAhNextPageBtn = 53;
+    public static int slotAhYourItemsBtn = 51, slotAhConfirmBtn = 11;
 
     private static final int MAGIC_TARGET = 0x5A3C96E1;
     public static int maxAllowedSubAccounts = 1;
@@ -67,10 +68,6 @@ public class ElytraFlipClient implements ClientModInitializer {
     private String currentOwnerName = "";
     private int authMagic = 0;
     private boolean slotConfigLoaded = false;
-
-    private int targetAhPage = 1, lastProcessedAhPage = 0;
-    private int accValidElytras = 0, accLowEqElytras = 0, accCompetitors = 0;
-    private double accLowestAh = -1;
 
     private static KeyBinding toggleKey;
     private boolean running = false, hasActiveOrder = false, hasActiveAhListing = false;
@@ -82,13 +79,12 @@ public class ElytraFlipClient implements ClientModInitializer {
     private int monitorTicksElapsed = 0, nextCheckTickTarget = 0, volatileTicksRemaining = 0, soldCount = 0;
     private double lowestAhPrice = -1, highestOrderPrice = -1, myOrderPrice = 0, finalAhSellPrice = 0;
     private double myListedAhPrice = 0, pendingRelistPrice = 0, lastFailedOrderPrice = -1, lastProfit = 0, totalProfit = 0;
-    private long accumulatedActiveMs = 0, lastResumeTimeMs = 0, lastSaleRecordedMs = 0, lastMoneyWarnMs = 0;
+    private long accumulatedActiveMs = 0, lastResumeTimeMs = 0, lastSaleRecordedMs = 0;
 
     private final List<Double> recentAhPrices = new ArrayList<>();
     private final List<Double> recentOrderPrices = new ArrayList<>();
     private final Random random = new Random();
     private static final Pattern PRICE_PATTERN = Pattern.compile("\\$\\s*([0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)\\s*([KMBkmb])?");
-    private static final Pattern PAGE_PATTERN = Pattern.compile("page\\s*([0-9]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern AH_BOUGHT_CHAT_PATTERN = Pattern.compile(
             "(?:bought|purchased)\\s+your\\s+(?:[0-9]+x?\\s+)?elytra\\s+for\\s*\\$\\s*([0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)\\s*([KMBkmb])?",
             Pattern.CASE_INSENSITIVE
@@ -110,7 +106,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         AH_MONITOR_WAIT, AH_CHECK_OPEN, AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, AH_YOUR_ITEMS_INSPECT, AH_WAIT_RELIST_INV
     }
 // === HẾT PHẦN 1 ===
-        @Override
+    @Override
     public void onInitializeClient() {
         toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "Bật/Tắt Auto Flip Elytra", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, "Donut Elytra Flip"
@@ -171,15 +167,10 @@ public class ElytraFlipClient implements ClientModInitializer {
                 || state == BotState.AH_YOUR_ITEMS_INSPECT || state == BotState.AH_WAIT_RELIST_INV;
     }
 
-    private void resetAhPagination() {
-        targetAhPage = 1; lastProcessedAhPage = 0;
-        accValidElytras = 0; accLowEqElytras = 0; accCompetitors = 0; accLowestAh = -1;
-    }
-
     private void restartCycleFromBeginning(MinecraftClient client, String reasonMsg) {
         chatAhSoldFlag = false; chatOrderCompletedFlag = false; chatNotEnoughMoneyFlag = false;
         hasActiveOrder = false; hasActiveAhListing = false; forceAhRefresh60s = false;
-        needAhRelist = false; cancelWait10sFlag = false; resetAhPagination();
+        needAhRelist = false; cancelWait10sFlag = false;
         lowestAhPrice = -1; highestOrderPrice = -1; lastReadSyncId = -1;
         guiWaitRetries = 0; ahWatchLoops = 0; moneyWaitLoops = 0; monitorTicksElapsed = 0;
         if (client.currentScreen != null && client.player != null) client.player.closeHandledScreen();
@@ -244,7 +235,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (!tickScanAndCreateOrder(client)) tickMonitorClaimAndSell(client);
     }
 // === HẾT PHẦN 2 ===
-    private boolean tickScanAndCreateOrder(MinecraftClient client) {
+                private boolean tickScanAndCreateOrder(MinecraftClient client) {
         switch (state) {
             case PAUSE_VOLATILE_MARKET -> {
                 if (client.currentScreen != null) client.player.closeHandledScreen();
@@ -304,45 +295,23 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else { guiWaitRetries = 0; cmdCooldownTicks = 0; sendCommandSafe(client, "order ely"); transition(BotState.WAIT_ENOUGH_MONEY_READ, 8, 12, "§eLàm mới /order ely..."); }
                 return true;
             }
+            // MỞ TRỰC TIẾP /ah elytra mending ĐỂ XEM GIÁ ELYTRA RẺ NHẤT (ĐÚNG UNBREAKING 3 + MENDING)
             case SCAN_AH_OPEN -> {
                 if (hasActiveAhListing) { state = BotState.AH_MONITOR_WAIT; return true; }
                 if (hasActiveOrder) { state = BotState.MONITOR_AH_OPEN; return true; }
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.SCAN_AH_OPEN, 8, 12, "§eĐóng bảng cũ..."); return true; }
-                if (!sendCommandSafe(client, "ah ely")) { transition(BotState.SCAN_AH_OPEN, 6, 10, "§eĐợi nhịp lệnh..."); return true; }
-                lowestAhPrice = -1; resetAhPagination(); guiWaitRetries = 0;
-                transitionHuman(BotState.SCAN_AH_READ, "§eĐang mở AH...");
+                if (!sendCommandSafe(client, ahSearchCmd)) { transition(BotState.SCAN_AH_OPEN, 6, 10, "§eĐợi nhịp lệnh..."); return true; }
+                lowestAhPrice = -1; guiWaitRetries = 0;
+                transitionHuman(BotState.SCAN_AH_READ, "§eMở /" + ahSearchCmd + "...");
                 return true;
             }
-            // QUÉT AH THEO TỪNG TRANG: ĐỦ >= 3 ELYTRA RỜI LÀ DỪNG LẠI NGAY, KHÔNG NHẢY QUA TRANG 3, 4!
             case SCAN_AH_READ -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
+                    int syncId = s.getScreenHandler().syncId;
                     String title = s.getTitle().getString().toLowerCase();
-                    if (!title.contains("order") && isAhPageLoaded(s)) {
-                        int curPage = getAhPageNumber(s);
-                        if (curPage < targetAhPage) {
-                            if (++guiWaitRetries < 30) {
-                                transition(BotState.SCAN_AH_READ, 3, 5, "§eĐợi mở Trang " + targetAhPage + "...");
-                                return true;
-                            }
-                        }
-                        if (lastProcessedAhPage != curPage) {
-                            lastProcessedAhPage = curPage;
-                            int validOnPage = countValidAhElytras(client, s);
-                            double pageLow = scanAhLowestPrice(client, s);
-                            accValidElytras += validOnPage;
-                            accLowestAh = combineLowestPrice(accLowestAh, pageLow);
-
-                            // Chỉ khi tổng Elytra rời < 3 mới bấm sang trang kế tiếp; nếu đã >= 3 thì DỪNG LẠI NGAY!
-                            if (accValidElytras < minElytraPerPage && hasNextPageButton(s) && curPage < 5) {
-                                targetAhPage = curPage + 1;
-                                guiWaitRetries = 0;
-                                clickSlotIfOpen(client, findSlotByName(client, "Next page", slotAhNextPageBtn), SlotActionType.PICKUP);
-                                transitionHuman(BotState.SCAN_AH_READ, "§eTrang " + curPage + " có " + validOnPage + " Ely -> Qua Trang " + targetAhPage + "...");
-                                return true;
-                            }
-                        }
-                        lastReadSyncId = s.getScreenHandler().syncId;
-                        lowestAhPrice = accLowestAh;
+                    if (syncId != lastReadSyncId && !title.contains("order") && hasAnyElytraWithPrice(client, s)) {
+                        lastReadSyncId = syncId;
+                        lowestAhPrice = scanAhLowestPrice(client, s);
                         client.player.closeHandledScreen();
                         transitionHuman(BotState.SCAN_ORDER_OPEN, "§eQua xem /order ely...");
                         return true;
@@ -376,7 +345,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 return true;
             }
 // === HẾT PHẦN 3 ===
-                       case EVALUATE_INITIAL_PROFIT -> {
+                        case EVALUATE_INITIAL_PROFIT -> {
                 if (lowestAhPrice <= 0 || highestOrderPrice <= 0) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
                     transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 15, "§cĐợi quét lại...");
@@ -408,7 +377,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                     return true;
                 }
                 double netProfit = calculateNetProfit(planned, lowestAhPrice);
-                logChat(client, "§7Order: §e" + formatMoney(highestOrderPrice) + " §7| AH: §a" + formatMoney(lowestAhPrice) + " §7| Đặt: §b" + formatMoney(planned) + " §7(Lời: §a+" + formatMoney(netProfit) + "§7)");
+                logChat(client, "§7Order: §e" + formatMoney(highestOrderPrice) + " §7| AH rẻ nhất: §a" + formatMoney(lowestAhPrice) + " §7| Đặt: §b" + formatMoney(planned) + " §7(Lời: §a+" + formatMoney(netProfit) + "§7)");
                 if (Math.round(netProfit) < Math.round(minProfit) || totalReq > maxCapital) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
                     transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 15, "§eChưa đủ lời (Đợi " + retryScanSec + "s)");
@@ -573,7 +542,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 // === HẾT PHẦN 4 ===
-                private void tickMonitorClaimAndSell(MinecraftClient client) {
+        private void tickMonitorClaimAndSell(MinecraftClient client) {
         switch (state) {
             case SUBMIT_SIGN_GUI -> {
                 if (client.currentScreen instanceof AbstractSignEditScreen signScreen) {
@@ -589,6 +558,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 }
                 cmdCooldownTicks = 0; transition(BotState.MONITOR_AH_OPEN, 4, 6, "§eMở bảng AH canh liên tục...");
             }
+            // CANH ĐƠN BẰNG LỆNH /ah elytra mending LIÊN TỤC
             case MONITOR_AH_OPEN -> {
                 if (monitorTicksElapsed >= refreshIntervalSec * 20) {
                     cancelWait10sFlag = false; transitionHuman(BotState.CANCEL_ORDER_OPEN, "§6Đủ 60s! Đi hủy Order...");
@@ -596,7 +566,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 }
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     if (!s.getTitle().getString().toLowerCase().contains("order")) {
-                        guiWaitRetries = 0; ahWatchLoops = 0; resetAhPagination();
+                        guiWaitRetries = 0; ahWatchLoops = 0;
                         transition(BotState.MONITOR_AH_READ, 4, 6, "§aĐang giữ bảng AH canh giá...");
                         return;
                     }
@@ -604,11 +574,10 @@ public class ElytraFlipClient implements ClientModInitializer {
                     transition(BotState.MONITOR_AH_OPEN, 6, 9, "§eĐóng bảng Order để mở AH...");
                     return;
                 }
-                cmdCooldownTicks = 0; sendCommandSafe(client, "ah ely");
-                lowestAhPrice = -1; resetAhPagination(); guiWaitRetries = 0; ahWatchLoops = 0;
-                transition(BotState.MONITOR_AH_READ, 8, 12, "§aĐang mở AH canh giá liên tục...");
+                cmdCooldownTicks = 0; sendCommandSafe(client, ahSearchCmd);
+                lowestAhPrice = -1; guiWaitRetries = 0; ahWatchLoops = 0;
+                transition(BotState.MONITOR_AH_READ, 8, 12, "§aMở /" + ahSearchCmd + " canh giá...");
             }
-            // CANH ĐƠN TRÊN AH: NẾU TRANG 1 CÓ 2 ELY, QUA TRANG 2 CÓ 10 ELY THÌ DỪNG LẠI Ở TRANG 2 (KHÔNG QUA TRANG 3, 4)
             case MONITOR_AH_READ -> {
                 if (monitorTicksElapsed >= refreshIntervalSec * 20) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
@@ -622,62 +591,28 @@ public class ElytraFlipClient implements ClientModInitializer {
                         transition(BotState.MONITOR_AH_OPEN, 8, 12, "§eĐóng bảng Order -> Mở lại AH...");
                         return;
                     }
-                    if (isAhPageLoaded(s)) {
-                        int curPage = getAhPageNumber(s);
-                        if (curPage < targetAhPage) {
-                            if (++guiWaitRetries < 30) {
-                                transition(BotState.MONITOR_AH_READ, 3, 5, "§eĐợi mở Trang " + targetAhPage + "...");
-                                return;
-                            }
-                        }
+                    if (hasAnyElytraWithPrice(client, s)) {
                         guiWaitRetries = 0;
-                        int validOnPage = countValidAhElytras(client, s);
-                        int lowEqOnPage = countAhElytraAtOrBelow(client, s, myOrderPrice);
-                        double pageLow = scanAhLowestPrice(client, s);
+                        lowestAhPrice = scanAhLowestPrice(client, s);
+                        int lowEq = countAhElytraAtOrBelow(client, s, myOrderPrice);
 
-                        if (lastProcessedAhPage != curPage) {
-                            lastProcessedAhPage = curPage;
-                            int prevValid = accValidElytras;
-                            int prevLowEq = accLowEqElytras;
-                            accValidElytras = prevValid + validOnPage;
-                            accLowEqElytras = prevLowEq + lowEqOnPage;
-                            accLowestAh = combineLowestPrice(accLowestAh, pageLow);
-
-                            if (accLowEqElytras >= 3) {
-                                client.player.closeHandledScreen();
-                                logChat(client, "§c[Hủy Khẩn Cấp] Phát hiện " + accLowEqElytras + " Elytra rời <= giá Order (" + formatMoney(myOrderPrice) + ")! Hủy làm lại!");
-                                cancelWait10sFlag = false; transitionHuman(BotState.CANCEL_ORDER_OPEN, "§cCó >=3 Elytra <= Order! Hủy...");
-                                return;
-                            }
-                            if (accValidElytras < minElytraPerPage && hasNextPageButton(s) && curPage < 5) {
-                                targetAhPage = curPage + 1;
-                                clickSlotIfOpen(client, findSlotByName(client, "Next page", slotAhNextPageBtn), SlotActionType.PICKUP);
-                                transitionHuman(BotState.MONITOR_AH_READ, "§eTrang " + curPage + " có " + validOnPage + " Ely -> Qua Trang " + targetAhPage + "...");
-                                return;
-                            }
-                            // Lưu lại phần cộng dồn của các trang trước để theo dõi trực tiếp tại trang dừng lại
-                            accValidElytras = prevValid;
-                            accLowEqElytras = prevLowEq;
-                        }
-
-                        int totalLowEq = accLowEqElytras + lowEqOnPage;
-                        if (totalLowEq >= 3) {
+                        if (lowEq >= 3) {
                             client.player.closeHandledScreen();
-                            logChat(client, "§c[Hủy Khẩn Cấp] Phát hiện " + totalLowEq + " Elytra rời <= giá Order (" + formatMoney(myOrderPrice) + ")! Hủy làm lại!");
+                            logChat(client, "§c[Hủy Khẩn Cấp] Phát hiện " + lowEq + " Elytra trên AH <= giá Order (" + formatMoney(myOrderPrice) + ")! Hủy làm lại!");
                             cancelWait10sFlag = false; transitionHuman(BotState.CANCEL_ORDER_OPEN, "§cCó >=3 Elytra <= Order! Hủy...");
                             return;
                         }
-                        statusText = "§aCanh P" + curPage + " (<=" + formatMoney(myOrderPrice) + ": " + totalLowEq + "/3) " + (monitorTicksElapsed / 20) + "/" + refreshIntervalSec + "s";
+                        statusText = "§aCanh AH (<=" + formatMoney(myOrderPrice) + ": " + lowEq + "/3) " + (monitorTicksElapsed / 20) + "/" + refreshIntervalSec + "s";
                         if (++ahWatchLoops < 25) transition(BotState.MONITOR_AH_READ, 5, 6, statusText);
                         else {
-                            ahWatchLoops = 0; resetAhPagination(); cmdCooldownTicks = 0;
-                            sendCommandSafe(client, "ah ely"); transition(BotState.MONITOR_AH_READ, 8, 12, statusText);
+                            ahWatchLoops = 0; cmdCooldownTicks = 0;
+                            sendCommandSafe(client, ahSearchCmd); transition(BotState.MONITOR_AH_READ, 8, 12, statusText);
                         }
                         return;
                     }
                 } else { cmdCooldownTicks = 0; transition(BotState.MONITOR_AH_OPEN, 4, 6, "§eMở lại bảng AH ngay..."); return; }
                 if (++guiWaitRetries < 20) transition(BotState.MONITOR_AH_READ, 3, 5, "§eĐợi tải bảng AH...");
-                else { guiWaitRetries = 0; resetAhPagination(); cmdCooldownTicks = 0; sendCommandSafe(client, "ah ely"); transition(BotState.MONITOR_AH_READ, 8, 12, "§eLàm mới /ah ely..."); }
+                else { guiWaitRetries = 0; cmdCooldownTicks = 0; sendCommandSafe(client, ahSearchCmd); transition(BotState.MONITOR_AH_READ, 8, 12, "§eLàm mới /" + ahSearchCmd + "..."); }
             }
             case CLAIM_OPEN_ORDER -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.CLAIM_OPEN_ORDER, 8, 12, "§aĐóng bảng cũ..."); return; }
@@ -736,7 +671,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transitionHuman(BotState.MONITOR_AH_OPEN, "§aTiếp tục canh đơn...");
             }
 // === HẾT PHẦN 5 ===
-                         case CANCEL_ORDER_OPEN -> {
+                       case CANCEL_ORDER_OPEN -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.CANCEL_ORDER_OPEN, 8, 12, "§cĐóng bảng cũ..."); return; }
                 cmdCooldownTicks = 0; sendCommandSafe(client, "order"); guiWaitRetries = 0;
                 transitionHuman(BotState.CANCEL_ORDER_CLICK_YOURS, "§cBấm Your Orders...");
@@ -794,33 +729,16 @@ public class ElytraFlipClient implements ClientModInitializer {
             }
             case SELL_SCAN_AH_OPEN -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.SELL_SCAN_AH_OPEN, 8, 12, "§dĐóng bảng cũ..."); return; }
-                if (!sendCommandSafe(client, "ah ely")) { transition(BotState.SELL_SCAN_AH_OPEN, 6, 10, "§dĐợi nhịp lệnh..."); return; }
-                resetAhPagination(); guiWaitRetries = 0; transitionHuman(BotState.SELL_SCAN_AH_READ, "§dQuét giá AH để bán...");
+                if (!sendCommandSafe(client, ahSearchCmd)) { transition(BotState.SELL_SCAN_AH_OPEN, 6, 10, "§dĐợi nhịp lệnh..."); return; }
+                guiWaitRetries = 0; transitionHuman(BotState.SELL_SCAN_AH_READ, "§dQuét /" + ahSearchCmd + " để bán...");
             }
             case SELL_SCAN_AH_READ -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
+                    int syncId = s.getScreenHandler().syncId;
                     String title = s.getTitle().getString().toLowerCase();
-                    if (!title.contains("order") && isAhPageLoaded(s)) {
-                        int curPage = getAhPageNumber(s);
-                        if (curPage < targetAhPage) {
-                            if (++guiWaitRetries < 30) { transition(BotState.SELL_SCAN_AH_READ, 3, 5, "§dĐợi mở Trang " + targetAhPage + "..."); return; }
-                        }
-                        if (lastProcessedAhPage != curPage) {
-                            lastProcessedAhPage = curPage;
-                            int validOnPage = countValidAhElytras(client, s);
-                            accValidElytras += validOnPage;
-                            accLowestAh = combineLowestPrice(accLowestAh, scanAhLowestPrice(client, s));
-                            accCompetitors += countCompetitorsBelowTarget(client, s, myOrderPrice);
-
-                            if (accValidElytras < minElytraPerPage && hasNextPageButton(s) && curPage < 5) {
-                                targetAhPage = curPage + 1; guiWaitRetries = 0;
-                                clickSlotIfOpen(client, findSlotByName(client, "Next page", slotAhNextPageBtn), SlotActionType.PICKUP);
-                                transitionHuman(BotState.SELL_SCAN_AH_READ, "§dTrang " + curPage + " ít Ely -> Qua Trang " + targetAhPage + "...");
-                                return;
-                            }
-                        }
-                        lastReadSyncId = s.getScreenHandler().syncId;
-                        finalAhSellPrice = determineSmartSellPriceAccumulated(myOrderPrice);
+                    if (syncId != lastReadSyncId && !title.contains("order") && hasAnyElytraWithPrice(client, s)) {
+                        lastReadSyncId = syncId;
+                        finalAhSellPrice = determineSmartSellPrice(client, s, myOrderPrice);
                         client.player.closeHandledScreen();
                         transitionHuman(BotState.SELL_SELECT_HOTBAR_SLOT, "§dCầm Elytra...");
                         return;
@@ -872,7 +790,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transitionHuman(BotState.SELL_SELECT_HOTBAR_SLOT, "§eThử lại /ah sell...");
             }
 // === HẾT PHẦN 6 ===
-                       case AH_MONITOR_WAIT -> {
+                     case AH_MONITOR_WAIT -> {
                 monitorTicksElapsed++;
                 statusText = "§dChờ mua AH " + formatMoney(myListedAhPrice) + " (" + (monitorTicksElapsed / 20) + "/" + refreshIntervalSec + "s)";
                 if (monitorTicksElapsed >= refreshIntervalSec * 20) { forceAhRefresh60s = true; transitionHuman(BotState.AH_CHECK_OPEN, "§6Đủ 60s! Xem giá & bán lại..."); return; }
@@ -880,32 +798,15 @@ public class ElytraFlipClient implements ClientModInitializer {
             }
             case AH_CHECK_OPEN -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.AH_CHECK_OPEN, 8, 12, statusText); return; }
-                if (!sendCommandSafe(client, "ah ely")) { transition(BotState.AH_CHECK_OPEN, 6, 10, statusText); return; }
-                resetAhPagination(); guiWaitRetries = 0; transitionHuman(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, "§dXem giá AH...");
+                if (!sendCommandSafe(client, ahSearchCmd)) { transition(BotState.AH_CHECK_OPEN, 6, 10, statusText); return; }
+                guiWaitRetries = 0; transitionHuman(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, "§dXem giá /" + ahSearchCmd + "...");
             }
             case AH_CHECK_READ_AND_CLICK_YOUR_ITEMS -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && !s.getTitle().getString().toLowerCase().contains("your items")) {
-                    if (isAhPageLoaded(s)) {
-                        int curPage = getAhPageNumber(s);
-                        if (curPage < targetAhPage) {
-                            if (++guiWaitRetries < 30) { transition(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 3, 5, "§dĐợi mở Trang " + targetAhPage + "..."); return; }
-                        }
-                        if (lastProcessedAhPage != curPage) {
-                            lastProcessedAhPage = curPage;
-                            int validOnPage = countValidAhElytras(client, s);
-                            accValidElytras += validOnPage;
-                            accLowestAh = combineLowestPrice(accLowestAh, scanAhLowestPrice(client, s));
-                            accCompetitors += countCompetitorsBelowTarget(client, s, myOrderPrice);
-
-                            if (accValidElytras < minElytraPerPage && hasNextPageButton(s) && curPage < 5) {
-                                targetAhPage = curPage + 1; guiWaitRetries = 0;
-                                clickSlotIfOpen(client, findSlotByName(client, "Next page", slotAhNextPageBtn), SlotActionType.PICKUP);
-                                transitionHuman(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, "§dTrang " + curPage + " ít Ely -> Qua Trang " + targetAhPage + "...");
-                                return;
-                            }
-                        }
-                        double smartPrice = determineSmartSellPriceAccumulated(myOrderPrice);
-                        if (accLowestAh > 0 && Math.round(accLowestAh) < Math.round(myListedAhPrice)) { pendingRelistPrice = smartPrice; needAhRelist = true; }
+                    if (hasAnyElytraWithPrice(client, s)) {
+                        double lowAh = scanAhLowestPrice(client, s);
+                        double smartPrice = determineSmartSellPrice(client, s, myOrderPrice);
+                        if (lowAh > 0 && Math.round(lowAh) < Math.round(myListedAhPrice)) { pendingRelistPrice = smartPrice; needAhRelist = true; }
                         else if (forceAhRefresh60s) { pendingRelistPrice = myListedAhPrice; needAhRelist = true; }
                         else needAhRelist = false;
 
@@ -943,7 +844,6 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 
-    // CHỈ NHẬN ELYTRA RỜI - TUYỆT ĐỐI BỎ QUA SHULKER BOX HOẶC HỘP CHỨA ELYTRA BÊN TRONG!
     private boolean isStandaloneElytra(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return false;
         if (stack.getItem() != Items.ELYTRA || stack.getItem() instanceof BlockItem) return false;
@@ -952,41 +852,6 @@ public class ElytraFlipClient implements ClientModInitializer {
         String itemKey = stack.getItem().getTranslationKey().toLowerCase();
         return !itemName.contains("shulker") && !itemName.contains("box") && !itemKey.contains("shulker");
     }
-
-    private int getAhPageNumber(HandledScreen<?> screen) {
-        String title = screen.getTitle().getString();
-        Matcher m = PAGE_PATTERN.matcher(title);
-        if (m.find()) {
-            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
-        }
-        return 1;
-    }
-
-    private boolean isAhPageLoaded(HandledScreen<?> screen) {
-        int size = screen.getScreenHandler().slots.size();
-        if (size > 53 && !screen.getScreenHandler().getSlot(53).getStack().isEmpty()) return true;
-        if (size > 49 && !screen.getScreenHandler().getSlot(49).getStack().isEmpty()) return true;
-        for (int i = 0; i < Math.min(45, size); i++) if (!screen.getScreenHandler().getSlot(i).getStack().isEmpty()) return true;
-        return false;
-    }
-
-    private boolean hasNextPageButton(HandledScreen<?> screen) {
-        if (screen.getScreenHandler().slots.size() <= slotAhNextPageBtn) return false;
-        ItemStack st = screen.getScreenHandler().getSlot(slotAhNextPageBtn).getStack();
-        if (st.isEmpty()) return false;
-        return st.getName().getString().toLowerCase().contains("next") || st.isOf(Items.ARROW) || st.isOf(Items.SPECTRAL_ARROW) || st.isOf(Items.TIPPED_ARROW);
-    }
-
-    private int countValidAhElytras(MinecraftClient client, HandledScreen<?> screen) {
-        int c = 0, limit = Math.min(45, screen.getScreenHandler().slots.size());
-        for (int i = 0; i < limit; i++) {
-            ItemStack st = screen.getScreenHandler().getSlot(i).getStack();
-            if (isStandaloneElytra(st) && hasExactOrderEnchants(client, st) && extractUnitPrice(client, st) > 0) c++;
-        }
-        return c;
-    }
-
-    private double combineLowestPrice(double p1, double p2) { return (p1 > 0 && p2 > 0) ? Math.min(p1, p2) : ((p1 > 0) ? p1 : p2); }
 
     private void bindCurrentAccountAsMaster(MinecraftClient client) {
         if (client == null || client.player == null) return;
@@ -1027,8 +892,8 @@ public class ElytraFlipClient implements ClientModInitializer {
             }
         } catch (Exception ignored) {}
     }
-// === HẾT PHẦN 7 ===
-            private double getPlayerBalance(MinecraftClient client) {
+
+    private double getPlayerBalance(MinecraftClient client) {
         if (client.world == null) return -1;
         try {
             Scoreboard sb = client.world.getScoreboard();
@@ -1081,8 +946,8 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
         return jumps >= 2 || ((maxP - minP) >= 20_000_000 && jumps >= 1);
     }
-
-    private int countAhElytraAtOrBelow(MinecraftClient client, HandledScreen<?> screen, double targetOrderPrice) {
+// === HẾT PHẦN 7 ===
+        private int countAhElytraAtOrBelow(MinecraftClient client, HandledScreen<?> screen, double targetOrderPrice) {
         int c = 0, limit = Math.min(45, screen.getScreenHandler().slots.size());
         long target = Math.round(targetOrderPrice);
         for (int i = 0; i < limit; i++) {
@@ -1095,26 +960,20 @@ public class ElytraFlipClient implements ClientModInitializer {
         return c;
     }
 
-    private int countCompetitorsBelowTarget(MinecraftClient client, HandledScreen<?> screen, double orderPrice) {
+    private double determineSmartSellPrice(MinecraftClient client, HandledScreen<?> screen, double orderPrice) {
         double base = orderPrice > 0 ? orderPrice : (highestOrderPrice > 0 ? highestOrderPrice : 500_000_000);
         double targetMin = calculateCustomSellPrice(base, minProfit);
-        int comp = 0, limit = Math.min(45, screen.getScreenHandler().slots.size());
+        double safeFloor = calculateCustomSellPrice(base, Math.max(500_000, minProfit - stopLossReduction));
+        double lowAh = -1; int comp = 0, limit = Math.min(45, screen.getScreenHandler().slots.size());
         for (int i = 0; i < limit; i++) {
             ItemStack st = screen.getScreenHandler().getSlot(i).getStack();
             if (isStandaloneElytra(st) && hasExactOrderEnchants(client, st)) {
                 double p = extractUnitPrice(client, st);
-                if (p > 0 && p < targetMin) comp++;
+                if (p > 0) { if (lowAh < 0 || p < lowAh) lowAh = p; if (p < targetMin) comp++; }
             }
         }
-        return comp;
-    }
-
-    private double determineSmartSellPriceAccumulated(double orderPrice) {
-        double base = orderPrice > 0 ? orderPrice : (highestOrderPrice > 0 ? highestOrderPrice : 500_000_000);
-        double targetMin = calculateCustomSellPrice(base, minProfit);
-        double safeFloor = calculateCustomSellPrice(base, Math.max(500_000, minProfit - stopLossReduction));
-        if (accLowestAh >= targetMin) return accLowestAh;
-        return (accLowestAh > 0 && accCompetitors >= stopLossCompetitorCount) ? Math.max(accLowestAh, safeFloor) : targetMin;
+        if (lowAh >= targetMin) return lowAh;
+        return (lowAh > 0 && comp >= stopLossCompetitorCount) ? Math.max(lowAh, safeFloor) : targetMin;
     }
 
     private void recordAhSaleFromChat(MinecraftClient client, double actualSoldPrice) {
@@ -1153,8 +1012,8 @@ public class ElytraFlipClient implements ClientModInitializer {
         for (int i = 0; i < 9; i++) if (client.player.getInventory().getStack(i).isEmpty()) return i;
         return 8;
     }
-// === HẾT PHẦN 8A - DÁN TIẾP PHẦN 8B NGAY DƯỚI DÒNG NÀY ===
-        private boolean hasAnyElytraWithPrice(MinecraftClient client, HandledScreen<?> screen) {
+
+    private boolean hasAnyElytraWithPrice(MinecraftClient client, HandledScreen<?> screen) {
         int limit = Math.min(45, screen.getScreenHandler().slots.size());
         for (int i = 0; i < limit; i++) {
             ItemStack st = screen.getScreenHandler().getSlot(i).getStack();
@@ -1277,7 +1136,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
         return fallback;
     }
-// === HẾT PHẦN 8B - DÁN TIẾP PHẦN 8C NGAY DƯỚI DÒNG NÀY ===
+
     private double parsePriceLine(String raw) {
         Matcher m = PRICE_PATTERN.matcher(raw); double best = -1;
         while (m.find()) { double v = parseAmountWithSuffix(m.group(1), m.group(2)); if (v > best) best = v; }
@@ -1375,3 +1234,4 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 }
 // === HOÀN TẤT 100% ===
+                
