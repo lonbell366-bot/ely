@@ -45,17 +45,22 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class ElytraFlipClient implements ClientModInitializer {
+    public static String ahSearchCmd = "ah elytra mending";
     public static double minProfit = 2_000_000, stopLossReduction = 1_000_000;
     public static double outbidSpreadThreshold = 3_000_000, outbidStep = 1_000_000;
     public static double maxCapital = 100_000_000_000.0, ahTaxPercent = 0.0;
     public static int stopLossCompetitorCount = 3, minElytraPerPage = 3;
     public static int orderQuantity = 1, ahYourItemsCheckSec = 25;
     public static int refreshIntervalSec = 60, retryScanSec = 8, volatilePauseSec = 300;
-    public static int minRandomTick = 7, maxRandomTick = 10;
-    public static boolean enableAhPage2 = true;
+    public static int minRandomTick = 6, maxRandomTick = 9;
 
-    // Cấu hình Auto Pay chỉnh trong bảng F9
+    // Các nút Bật/Tắt trong bảng Settings F9
+    public static boolean showHud = true;
     public static boolean autoPayEnabled = false;
+    public static boolean autoOutbidEnabled = true;
+    public static boolean enableAhPage2 = true;
+    public static boolean antiVolatileEnabled = true;
+
     public static String autoPayTarget = "";
     public static double autoPayThreshold = 10_000_000;
     public static double autoPayAmount = 10_000_000;
@@ -115,10 +120,10 @@ public class ElytraFlipClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Bật/Tắt Auto Flip Elytra (F6)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, "Donut Elytra Flip"
+                "Bật/Tắt Auto Flip (F6)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, "Donut Elytra Flip"
         ));
         menuKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Mở Bảng Cài Đặt & Auto Pay (F9)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F9, "Donut Elytra Flip"
+                "Mở Bảng Settings (F9)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F9, "Donut Elytra Flip"
         ));
         HudRenderCallback.EVENT.register(this::renderHud);
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
@@ -170,10 +175,12 @@ public class ElytraFlipClient implements ClientModInitializer {
             lastResumeTimeMs = System.currentTimeMillis();
             recentAhPrices.clear(); recentOrderPrices.clear();
             verifyingStabilityAfterPause = false; lastFailedOrderPrice = -1;
+            logChat(client, "§aĐã BẬT Auto Flip Elytra! (Bấm §eF9 §ađể mở Settings)");
             restartCycleFromBeginning(client, "§aĐang khởi động...");
         } else {
             accumulatedActiveMs += (System.currentTimeMillis() - lastResumeTimeMs);
             state = BotState.IDLE; statusText = "§cĐã Tắt";
+            logChat(client, "§cĐã TẮT Auto Flip Elytra!");
         }
     }
 
@@ -194,9 +201,9 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (!configLoaded) { configLoaded = true; loadConfig(client); }
         if (cmdCooldownTicks > 0) cmdCooldownTicks--;
 
-        // Bấm F9 để mở bảng điều khiển Menu GUI
         while (menuKey.wasPressed()) {
-            client.setScreen(new FlipConfigScreen(this));
+            if (client.currentScreen instanceof FlipConfigScreen s) s.close();
+            else client.setScreen(new FlipConfigScreen(this));
             return;
         }
 
@@ -208,7 +215,6 @@ public class ElytraFlipClient implements ClientModInitializer {
             toggleBotRunning(client);
         }
 
-        // Thực thi lệnh Auto Pay nếu đủ điều kiện và hết hồi chiêu lệnh
         if (!pendingPayCommand.isEmpty() && cmdCooldownTicks == 0) {
             if (sendCommandSafe(client, pendingPayCommand)) {
                 logChat(client, "§a§l[Auto Pay] §eĐã tự động chuyển §b" + formatMoney(autoPayAmount) + " §echo §a" + autoPayTarget + "§e!");
@@ -251,7 +257,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (!tickScanAndCreateOrder(client)) tickMonitorClaimAndSell(client);
     }
 // === HẾT PHẦN 2 ===
-           private boolean tickScanAndCreateOrder(MinecraftClient client) {
+             private boolean tickScanAndCreateOrder(MinecraftClient client) {
         switch (state) {
             case PAUSE_VOLATILE_MARKET -> {
                 if (client.currentScreen != null) client.player.closeHandledScreen();
@@ -289,7 +295,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                         if (price > 0) {
                             highestOrderPrice = price;
                             double rawDiff = (lowestAhPrice > 0) ? (lowestAhPrice - highestOrderPrice) : 0;
-                            double req = (lowestAhPrice > 0 && Math.round(rawDiff) >= Math.round(outbidSpreadThreshold))
+                            double req = (autoOutbidEnabled && lowestAhPrice > 0 && Math.round(rawDiff) >= Math.round(outbidSpreadThreshold))
                                     ? (highestOrderPrice + outbidStep) : highestOrderPrice;
                             double totalReq = req * orderQuantity, bal = getPlayerBalance(client);
                             boolean enough = (bal > 0) ? ((bal >= totalReq) && (lastFailedOrderPrice <= 0 || bal > lastFailedOrderPrice || totalReq < lastFailedOrderPrice))
@@ -315,9 +321,9 @@ public class ElytraFlipClient implements ClientModInitializer {
                 if (hasActiveAhListing) { state = BotState.AH_MONITOR_WAIT; return true; }
                 if (hasActiveOrder) { state = BotState.MONITOR_AH_OPEN; return true; }
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.SCAN_AH_OPEN, 6, 10, "§eĐóng bảng cũ..."); return true; }
-                if (!sendCommandSafe(client, "ah ely")) { transition(BotState.SCAN_AH_OPEN, 6, 10, "§eĐợi nhịp lệnh..."); return true; }
+                if (!sendCommandSafe(client, ahSearchCmd)) { transition(BotState.SCAN_AH_OPEN, 6, 10, "§eĐợi nhịp lệnh..."); return true; }
                 lowestAhPrice = -1; resetAhPagination(); guiWaitRetries = 0;
-                transition(BotState.SCAN_AH_READ, 10, 14, "§eĐang mở /ah ely...");
+                transition(BotState.SCAN_AH_READ, 10, 14, "§eĐang mở /" + ahSearchCmd + "...");
                 return true;
             }
             case SCAN_AH_READ -> {
@@ -372,14 +378,14 @@ public class ElytraFlipClient implements ClientModInitializer {
                 return true;
             }
 // === HẾT PHẦN 3 ===
-                       case EVALUATE_INITIAL_PROFIT -> {
+                    case EVALUATE_INITIAL_PROFIT -> {
                 if (lowestAhPrice <= 0 || highestOrderPrice <= 0) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
                     transition(BotState.SCAN_AH_OPEN, retryScanSec * 20, retryScanSec * 20 + 10, "§cĐợi quét lại...");
                     return true;
                 }
                 recordPriceSample(lowestAhPrice, highestOrderPrice);
-                if (isMarketPriceChaotic()) {
+                if (antiVolatileEnabled && isMarketPriceChaotic()) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
                     volatileTicksRemaining = volatilePauseSec * 20;
                     logChat(client, "§c§l[Cảnh Báo] Giá nhảy quá lộn xộn! Tạm dừng Order chờ 5 phút...");
@@ -394,7 +400,8 @@ public class ElytraFlipClient implements ClientModInitializer {
                 verifyingStabilityAfterPause = false;
 
                 double rawDiff = lowestAhPrice - highestOrderPrice;
-                double planned = (Math.round(rawDiff) >= Math.round(outbidSpreadThreshold)) ? (highestOrderPrice + outbidStep) : highestOrderPrice;
+                double planned = (autoOutbidEnabled && Math.round(rawDiff) >= Math.round(outbidSpreadThreshold))
+                        ? (highestOrderPrice + outbidStep) : highestOrderPrice;
                 double totalReq = planned * orderQuantity, bal = getPlayerBalance(client);
 
                 if ((bal > 0 && bal < totalReq) || (lastFailedOrderPrice > 0 && totalReq >= lastFailedOrderPrice && (bal <= 0 || bal <= lastFailedOrderPrice))) {
@@ -473,7 +480,6 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transitionHuman(BotState.ORDER_CLICK_ITEM_SLOT, "§cBấm lại Choose Item...");
                 return true;
             }
-            // TĂNG TỐC TỐI ĐA CHỖ CHỌN ELYTRA & ENCHANT TRONG ORDER (CHỈ 1-2 TICKS)
             case ORDER_SELECT_ELYTRA -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     String title = s.getTitle().getString().toLowerCase();
@@ -495,7 +501,6 @@ public class ElytraFlipClient implements ClientModInitializer {
             }
             case ORDER_ENCH_UNBREAKING -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && s.getTitle().getString().toLowerCase().contains("enchant")) {
-                    // Bấm liền Unbreaking III (Ô 36) và Mending (Ô 19) cực nhanh!
                     clickSlotIfOpen(client, slotEnchantUnbreaking, SlotActionType.PICKUP);
                     clickSlotIfOpen(client, slotEnchantMending, SlotActionType.PICKUP);
                     guiWaitRetries = 0;
@@ -581,7 +586,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 // === HẾT PHẦN 4 ===
-              private void tickMonitorClaimAndSell(MinecraftClient client) {
+           private void tickMonitorClaimAndSell(MinecraftClient client) {
         switch (state) {
             case SUBMIT_SIGN_GUI -> {
                 if (client.currentScreen instanceof AbstractSignEditScreen signScreen) {
@@ -612,9 +617,9 @@ public class ElytraFlipClient implements ClientModInitializer {
                     transition(BotState.MONITOR_AH_OPEN, 5, 8, "§eĐóng bảng Order để mở AH...");
                     return;
                 }
-                cmdCooldownTicks = 0; sendCommandSafe(client, "ah ely");
+                cmdCooldownTicks = 0; sendCommandSafe(client, ahSearchCmd);
                 lowestAhPrice = -1; resetAhPagination(); guiWaitRetries = 0; ahWatchLoops = 0;
-                transition(BotState.MONITOR_AH_READ, 8, 12, "§aĐang mở AH canh giá liên tục...");
+                transition(BotState.MONITOR_AH_READ, 8, 12, "§aĐang mở /" + ahSearchCmd + " canh giá...");
             }
             case MONITOR_AH_READ -> {
                 if (monitorTicksElapsed >= refreshIntervalSec * 20) {
@@ -665,13 +670,13 @@ public class ElytraFlipClient implements ClientModInitializer {
                         if (++ahWatchLoops < 22) transition(BotState.MONITOR_AH_READ, 5, 6, statusText);
                         else {
                             ahWatchLoops = 0; resetAhPagination(); cmdCooldownTicks = 0;
-                            sendCommandSafe(client, "ah ely"); transition(BotState.MONITOR_AH_READ, 8, 12, statusText);
+                            sendCommandSafe(client, ahSearchCmd); transition(BotState.MONITOR_AH_READ, 8, 12, statusText);
                         }
                         return;
                     }
                 } else { cmdCooldownTicks = 0; transition(BotState.MONITOR_AH_OPEN, 4, 6, "§eMở lại bảng AH ngay..."); return; }
                 if (++guiWaitRetries < 20) transition(BotState.MONITOR_AH_READ, 3, 5, "§eĐợi tải bảng AH...");
-                else { guiWaitRetries = 0; resetAhPagination(); cmdCooldownTicks = 0; sendCommandSafe(client, "ah ely"); transition(BotState.MONITOR_AH_READ, 8, 12, "§eLàm mới /ah ely..."); }
+                else { guiWaitRetries = 0; resetAhPagination(); cmdCooldownTicks = 0; sendCommandSafe(client, ahSearchCmd); transition(BotState.MONITOR_AH_READ, 8, 12, "§eLàm mới /" + ahSearchCmd + "..."); }
             }
             case CLAIM_OPEN_ORDER -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.CLAIM_OPEN_ORDER, 6, 10, "§aĐóng bảng cũ..."); return; }
@@ -730,7 +735,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transitionHuman(BotState.MONITOR_AH_OPEN, "§aTiếp tục canh đơn...");
             }
 // === HẾT PHẦN 5 ===
-                     case CANCEL_ORDER_OPEN -> {
+                       case CANCEL_ORDER_OPEN -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.CANCEL_ORDER_OPEN, 6, 10, "§cĐóng bảng cũ..."); return; }
                 cmdCooldownTicks = 0; sendCommandSafe(client, "order"); guiWaitRetries = 0;
                 transitionHuman(BotState.CANCEL_ORDER_CLICK_YOURS, "§cBấm Your Orders...");
@@ -788,8 +793,8 @@ public class ElytraFlipClient implements ClientModInitializer {
             }
             case SELL_SCAN_AH_OPEN -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.SELL_SCAN_AH_OPEN, 6, 10, "§dĐóng bảng cũ..."); return; }
-                if (!sendCommandSafe(client, "ah ely")) { transition(BotState.SELL_SCAN_AH_OPEN, 6, 10, "§dĐợi nhịp lệnh..."); return; }
-                resetAhPagination(); guiWaitRetries = 0; transition(BotState.SELL_SCAN_AH_READ, 10, 14, "§dQuét giá AH để bán...");
+                if (!sendCommandSafe(client, ahSearchCmd)) { transition(BotState.SELL_SCAN_AH_OPEN, 6, 10, "§dĐợi nhịp lệnh..."); return; }
+                resetAhPagination(); guiWaitRetries = 0; transition(BotState.SELL_SCAN_AH_READ, 10, 14, "§dQuét /" + ahSearchCmd + " để bán...");
             }
             case SELL_SCAN_AH_READ -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
@@ -860,7 +865,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transitionHuman(BotState.SELL_SELECT_HOTBAR_SLOT, "§eThử lại /ah sell...");
             }
 // === HẾT PHẦN 6 ===
-                     case AH_MONITOR_WAIT -> {
+                         case AH_MONITOR_WAIT -> {
                 monitorTicksElapsed++;
                 statusText = "§dChờ mua AH " + formatMoney(myListedAhPrice) + " (" + (monitorTicksElapsed / 20) + "/" + refreshIntervalSec + "s)";
                 if (monitorTicksElapsed >= refreshIntervalSec * 20) { forceAhRefresh60s = true; transitionHuman(BotState.AH_CHECK_OPEN, "§6Đủ " + refreshIntervalSec + "s! Xem giá & bán lại..."); return; }
@@ -868,8 +873,8 @@ public class ElytraFlipClient implements ClientModInitializer {
             }
             case AH_CHECK_OPEN -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.AH_CHECK_OPEN, 6, 10, statusText); return; }
-                if (!sendCommandSafe(client, "ah ely")) { transition(BotState.AH_CHECK_OPEN, 5, 8, statusText); return; }
-                resetAhPagination(); guiWaitRetries = 0; transition(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 10, 14, "§dXem giá AH...");
+                if (!sendCommandSafe(client, ahSearchCmd)) { transition(BotState.AH_CHECK_OPEN, 5, 8, statusText); return; }
+                resetAhPagination(); guiWaitRetries = 0; transition(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 10, 14, "§dXem giá /" + ahSearchCmd + "...");
             }
             case AH_CHECK_READ_AND_CLICK_YOUR_ITEMS -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && !s.getTitle().getString().toLowerCase().contains("your items")) {
@@ -929,8 +934,7 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 
     private boolean isGuiPopulated(HandledScreen<?> screen) {
-        int size = screen.getScreenHandler().slots.size();
-        int nonEmpty = 0;
+        int size = screen.getScreenHandler().slots.size(), nonEmpty = 0;
         for (int i = 0; i < Math.min(54, size); i++) {
             if (!screen.getScreenHandler().getSlot(i).getStack().isEmpty()) nonEmpty++;
         }
@@ -968,12 +972,16 @@ public class ElytraFlipClient implements ClientModInitializer {
             File f = new File(client.runDirectory, "config/elyflip_config.dat");
             f.getParentFile().mkdirs();
             List<String> lines = Arrays.asList(
+                    "SHOW_HUD:" + showHud,
                     "MIN_PROFIT:" + minProfit,
                     "AUTOPAY_ON:" + autoPayEnabled,
                     "AUTOPAY_TARGET:" + autoPayTarget,
                     "AUTOPAY_THRESHOLD:" + autoPayThreshold,
                     "AUTOPAY_AMOUNT:" + autoPayAmount,
+                    "OUTBID_ON:" + autoOutbidEnabled,
                     "PAGE2_ON:" + enableAhPage2,
+                    "VOLATILE_ON:" + antiVolatileEnabled,
+                    "REFRESH_SEC:" + refreshIntervalSec,
                     "MIN_TICK:" + minRandomTick,
                     "MAX_TICK:" + maxRandomTick
             );
@@ -986,19 +994,23 @@ public class ElytraFlipClient implements ClientModInitializer {
             File f = new File(client.runDirectory, "config/elyflip_config.dat");
             if (!f.exists()) return;
             for (String line : Files.readAllLines(f.toPath(), StandardCharsets.UTF_8)) {
-                if (line.startsWith("MIN_PROFIT:")) minProfit = Double.parseDouble(line.substring(11).trim());
+                if (line.startsWith("SHOW_HUD:")) showHud = Boolean.parseBoolean(line.substring(9).trim());
+                else if (line.startsWith("MIN_PROFIT:")) minProfit = Double.parseDouble(line.substring(11).trim());
                 else if (line.startsWith("AUTOPAY_ON:")) autoPayEnabled = Boolean.parseBoolean(line.substring(11).trim());
                 else if (line.startsWith("AUTOPAY_TARGET:")) autoPayTarget = line.substring(15).trim();
                 else if (line.startsWith("AUTOPAY_THRESHOLD:")) autoPayThreshold = Double.parseDouble(line.substring(18).trim());
                 else if (line.startsWith("AUTOPAY_AMOUNT:")) autoPayAmount = Double.parseDouble(line.substring(15).trim());
+                else if (line.startsWith("OUTBID_ON:")) autoOutbidEnabled = Boolean.parseBoolean(line.substring(10).trim());
                 else if (line.startsWith("PAGE2_ON:")) enableAhPage2 = Boolean.parseBoolean(line.substring(9).trim());
+                else if (line.startsWith("VOLATILE_ON:")) antiVolatileEnabled = Boolean.parseBoolean(line.substring(12).trim());
+                else if (line.startsWith("REFRESH_SEC:")) refreshIntervalSec = Integer.parseInt(line.substring(12).trim());
                 else if (line.startsWith("MIN_TICK:")) minRandomTick = Integer.parseInt(line.substring(9).trim());
                 else if (line.startsWith("MAX_TICK:")) maxRandomTick = Integer.parseInt(line.substring(9).trim());
             }
         } catch (Exception ignored) {}
     }
 // === HẾT PHẦN 7 ===
-        private double getPlayerBalance(MinecraftClient client) {
+         private double getPlayerBalance(MinecraftClient client) {
         if (client.world == null) return -1;
         try {
             Scoreboard sb = client.world.getScoreboard();
@@ -1089,7 +1101,6 @@ public class ElytraFlipClient implements ClientModInitializer {
         return (lowAh > 0 && comp >= stopLossCompetitorCount) ? Math.max(lowAh, safeFloor) : targetMin;
     }
 
-    // GHI NHẬN LỜI KHI BÁN XONG & KÍCH HOẠT AUTO PAY NẾU ĐỦ MỐC LỜI!
     private void recordAhSaleFromChat(MinecraftClient client, double actualSoldPrice) {
         double base = myOrderPrice > 0 ? myOrderPrice : (highestOrderPrice > 0 ? highestOrderPrice : actualSoldPrice - minProfit);
         soldCount++;
@@ -1117,20 +1128,22 @@ public class ElytraFlipClient implements ClientModInitializer {
 
     private void renderHud(DrawContext ctx, RenderTickCounter tc) {
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player == null || client.options.hudHidden) return;
-        ctx.fill(6, 6, 252, 96, 0x90000000);
-        ctx.fill(6, 6, 252, 8, running ? 0xFF55FF55 : 0xFFFF5555);
+        if (!showHud || client.player == null || client.options.hudHidden) return;
+        ctx.fill(6, 6, 256, 98, 0xA50D1117);
+        ctx.fill(6, 6, 256, 8, running ? 0xFF00E676 : 0xFFFF5252);
+        ctx.fill(6, 97, 256, 98, 0xFF30363D);
         double avg = soldCount > 0 ? (totalProfit / soldCount) : 0;
-        String payBadge = autoPayEnabled ? " §a[AutoPay: BẬT]" : " §7[F9: Menu]";
-        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§6§lAUTO FLIP ELYTRA" + payBadge), 12, 12, 0xFFFFFF);
+        String payBadge = autoPayEnabled ? " §a[AutoPay: BẬT]" : " §b[F9: Settings]";
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§6§l⚡ AUTO FLIP ELYTRA" + payBadge), 12, 12, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§7Trạng thái: " + statusText), 12, 24, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fĐã bán: §b§l" + soldCount + " cái §7| Gần nhất: §a+" + formatMoney(lastProfit)), 12, 36, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fTổng lời: §e§l+" + formatMoney(totalProfit) + " §7(TB: " + formatMoney(avg) + ")"), 12, 48, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fTiền lời / 1h: §d§l+" + formatMoney(getProfitPerHour()) + "/h"), 12, 60, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§7TG: §f" + getActiveTimeFormatted() + " §7| Quỹ Pay: §a" + formatMoney(unpaidProfitPool) + "/" + formatMoney(autoPayThreshold)), 12, 72, 0xFFFFFF);
+        ctx.drawTextWithShadow(client.textRenderer, Text.literal("§8[F6] Bật/Tắt Bot  •  [F9] Mở Bảng Settings"), 12, 84, 0xAAAAAA);
     }
-// === HẾT PHẦN 8A - DÁN TIẾP PHẦN 8B NGAY DƯỚI DÒNG NÀY ===
-             private int findEmptyHotbarSlot(MinecraftClient client) {
+
+    private int findEmptyHotbarSlot(MinecraftClient client) {
         for (int i = 0; i < 9; i++) if (client.player.getInventory().getStack(i).isEmpty()) return i;
         return 8;
     }
@@ -1152,8 +1165,8 @@ public class ElytraFlipClient implements ClientModInitializer {
         for (Text t : stack.getTooltip(ctx, client.player, TooltipType.BASIC)) result.add(t.getString().replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim());
         return result;
     }
-
-    private boolean isOrderDeliveredInList(MinecraftClient client, ItemStack stack) {
+// === HẾT PHẦN 8 ===
+        private boolean isOrderDeliveredInList(MinecraftClient client, ItemStack stack) {
         for (String line : getAllItemTextLines(client, stack)) {
             String plain = line.toLowerCase();
             if (plain.contains("order completed") || plain.contains("1/1 delivered")) return true;
@@ -1278,7 +1291,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (m.find()) return parseAmountWithSuffix(m.group(1), m.group(2));
         return -1;
     }
-// === HẾT PHẦN 8B - DÁN TIẾP PHẦN 8C NGAY DƯỚI DÒNG NÀY ===
+// === HẾT PHẦN 9A - DÁN TIẾP PHẦN 9B NGAY DƯỚI DÒNG NÀY ===
             private boolean needsAmountInput(MinecraftClient client) {
         if (!(client.currentScreen instanceof HandledScreen<?> s) || slotSetAmountBtn >= s.getScreenHandler().slots.size()) return false;
         ItemStack stack = s.getScreenHandler().getSlot(slotSetAmountBtn).getStack();
@@ -1344,90 +1357,131 @@ public class ElytraFlipClient implements ClientModInitializer {
     private String toCommandPrice(double a) { long r = Math.round(a); return (r % 1_000_000 == 0) ? (r / 1_000_000) + "m" : String.valueOf(r); }
     private void logChat(MinecraftClient client, String msg) { if (client.player != null) client.player.sendMessage(Text.literal("§6§l[ElytraFlip] §r" + msg), false); }
 
-    // BẢNG MENU CÀI ĐẶT & AUTO PAY KHI BẤM F9
+    // GIAO DIỆN BẢNG SETTINGS F9 SIÊU ĐẸP (2 CỘT HIỆN ĐẠI - GOM TOÀN BỘ CHỨC NĂNG)
     public static class FlipConfigScreen extends Screen {
         private final ElytraFlipClient mod;
-        private TextFieldWidget targetField, thresholdField, payAmountField, minProfitField;
+        private TextFieldWidget targetField, thresholdField, payAmountField, minProfitField, refreshField, tickField;
 
         public FlipConfigScreen(ElytraFlipClient mod) {
-            super(Text.literal("Bảng Điều Khiển Auto Flip Elytra"));
+            super(Text.literal("Elytra Flip Settings"));
             this.mod = mod;
+        }
+
+        private String btnTxt(String label, boolean on) {
+            return "§f" + label + ": " + (on ? "§a§lBẬT" : "§c§lTẮT");
         }
 
         @Override
         protected void init() {
-            int cx = this.width / 2, y = 32;
-            this.addDrawableChild(ButtonWidget.builder(Text.literal(mod.running ? "§aAuto Flip Bot: ĐANG BẬT" : "§cAuto Flip Bot: ĐANG TẮT"), b -> {
+            int cx = this.width / 2, py = (this.height - 216) / 2;
+            int leftX = cx - 158, rightFieldX = cx + 86, rowY = py + 50;
+
+            // CỘT TRÁI: 6 NÚT BẬT / TẮT CHỨC NĂNG
+            this.addDrawableChild(ButtonWidget.builder(Text.literal(btnTxt("Chạy Bot (F6)", mod.running)), b -> {
                 mod.toggleBotRunning(MinecraftClient.getInstance());
-                b.setMessage(Text.literal(mod.running ? "§aAuto Flip Bot: ĐANG BẬT" : "§cAuto Flip Bot: ĐANG TẮT"));
-            }).dimensions(cx - 105, y, 210, 20).build());
+                b.setMessage(Text.literal(btnTxt("Chạy Bot (F6)", mod.running)));
+            }).dimensions(leftX, rowY, 150, 20).build());
 
-            y += 24;
-            this.addDrawableChild(ButtonWidget.builder(Text.literal(autoPayEnabled ? "§aAuto Pay Khi Lời: BẬT" : "§cAuto Pay Khi Lời: TẮT"), b -> {
-                autoPayEnabled = !autoPayEnabled;
-                b.setMessage(Text.literal(autoPayEnabled ? "§aAuto Pay Khi Lời: BẬT" : "§cAuto Pay Khi Lời: TẮT"));
-            }).dimensions(cx - 105, y, 210, 20).build());
+            this.addDrawableChild(ButtonWidget.builder(Text.literal(btnTxt("Bảng HUD Góc Trái", showHud)), b -> {
+                showHud = !showHud; b.setMessage(Text.literal(btnTxt("Bảng HUD Góc Trái", showHud)));
+            }).dimensions(leftX, rowY + 22, 150, 20).build());
 
-            y += 24;
-            this.addDrawableChild(ButtonWidget.builder(Text.literal(enableAhPage2 ? "§bLật Trang 2 AH Khi Ít Ely: BẬT" : "§7Lật Trang 2 AH Khi Ít Ely: TẮT"), b -> {
-                enableAhPage2 = !enableAhPage2;
-                b.setMessage(Text.literal(enableAhPage2 ? "§bLật Trang 2 AH Khi Ít Ely: BẬT" : "§7Lật Trang 2 AH Khi Ít Ely: TẮT"));
-            }).dimensions(cx - 105, y, 210, 20).build());
+            this.addDrawableChild(ButtonWidget.builder(Text.literal(btnTxt("Auto Pay Khi Lời", autoPayEnabled)), b -> {
+                autoPayEnabled = !autoPayEnabled; b.setMessage(Text.literal(btnTxt("Auto Pay Khi Lời", autoPayEnabled)));
+            }).dimensions(leftX, rowY + 44, 150, 20).build());
 
-            y += 28;
-            targetField = new TextFieldWidget(this.textRenderer, cx + 5, y, 100, 18, Text.literal("Người nhận"));
+            this.addDrawableChild(ButtonWidget.builder(Text.literal(btnTxt("Đè Giá Order (+1M)", autoOutbidEnabled)), b -> {
+                autoOutbidEnabled = !autoOutbidEnabled; b.setMessage(Text.literal(btnTxt("Đè Giá Order (+1M)", autoOutbidEnabled)));
+            }).dimensions(leftX, rowY + 66, 150, 20).build());
+
+            this.addDrawableChild(ButtonWidget.builder(Text.literal(btnTxt("Lật Trang 2 AH", enableAhPage2)), b -> {
+                enableAhPage2 = !enableAhPage2; b.setMessage(Text.literal(btnTxt("Lật Trang 2 AH", enableAhPage2)));
+            }).dimensions(leftX, rowY + 88, 150, 20).build());
+
+            this.addDrawableChild(ButtonWidget.builder(Text.literal(btnTxt("Chống Giá Loạn", antiVolatileEnabled)), b -> {
+                antiVolatileEnabled = !antiVolatileEnabled; b.setMessage(Text.literal(btnTxt("Chống Giá Loạn", antiVolatileEnabled)));
+            }).dimensions(leftX, rowY + 110, 150, 20).build());
+
+            // CỘT PHẢI: 6 Ô CHỈNH THÔNG SỐ & TIỀN PAY
+            targetField = new TextFieldWidget(this.textRenderer, rightFieldX, rowY + 1, 72, 18, Text.literal(""));
             targetField.setMaxLength(32); targetField.setText(autoPayTarget);
             this.addDrawableChild(targetField);
 
-            y += 22;
-            thresholdField = new TextFieldWidget(this.textRenderer, cx + 5, y, 100, 18, Text.literal("Mốc lời (M)"));
+            thresholdField = new TextFieldWidget(this.textRenderer, rightFieldX, rowY + 23, 72, 18, Text.literal(""));
             thresholdField.setText(String.valueOf(autoPayThreshold / 1_000_000.0));
             this.addDrawableChild(thresholdField);
 
-            y += 22;
-            payAmountField = new TextFieldWidget(this.textRenderer, cx + 5, y, 100, 18, Text.literal("Số tiền Pay (M)"));
+            payAmountField = new TextFieldWidget(this.textRenderer, rightFieldX, rowY + 45, 72, 18, Text.literal(""));
             payAmountField.setText(String.valueOf(autoPayAmount / 1_000_000.0));
             this.addDrawableChild(payAmountField);
 
-            y += 22;
-            minProfitField = new TextFieldWidget(this.textRenderer, cx + 5, y, 100, 18, Text.literal("Lời tối thiểu (M)"));
+            minProfitField = new TextFieldWidget(this.textRenderer, rightFieldX, rowY + 67, 72, 18, Text.literal(""));
             minProfitField.setText(String.valueOf(minProfit / 1_000_000.0));
             this.addDrawableChild(minProfitField);
 
-            y += 26;
-            this.addDrawableChild(ButtonWidget.builder(Text.literal("§eReset Thống Kê"), b -> {
+            refreshField = new TextFieldWidget(this.textRenderer, rightFieldX, rowY + 89, 72, 18, Text.literal(""));
+            refreshField.setText(String.valueOf(refreshIntervalSec));
+            this.addDrawableChild(refreshField);
+
+            tickField = new TextFieldWidget(this.textRenderer, rightFieldX, rowY + 111, 72, 18, Text.literal(""));
+            tickField.setText(String.valueOf(minRandomTick));
+            this.addDrawableChild(tickField);
+
+            // THANH NÚT DƯỚI CÙNG
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("§e⟳ Reset Thống Kê"), b -> {
                 mod.soldCount = 0; mod.lastProfit = 0; mod.totalProfit = 0; mod.unpaidProfitPool = 0;
                 mod.accumulatedActiveMs = 0; mod.lastResumeTimeMs = System.currentTimeMillis();
-            }).dimensions(cx - 105, y, 100, 20).build());
+            }).dimensions(leftX, py + 186, 150, 20).build());
 
-            this.addDrawableChild(ButtonWidget.builder(Text.literal("§a§lLưu & Đóng"), b -> this.close()).dimensions(cx + 5, y, 100, 20).build());
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("§a§l✔ Lưu & Đóng (ESC)"), b -> this.close()).dimensions(cx + 8, py + 186, 150, 20).build());
         }
 
         private void applyValues() {
             autoPayTarget = targetField.getText().trim();
-            try { autoPayThreshold = Double.parseDouble(thresholdField.getText().trim()) * 1_000_000; } catch (Exception ignored) {}
-            try { autoPayAmount = Double.parseDouble(payAmountField.getText().trim()) * 1_000_000; } catch (Exception ignored) {}
-            try { minProfit = Double.parseDouble(minProfitField.getText().trim()) * 1_000_000; } catch (Exception ignored) {}
+            try { autoPayThreshold = Math.max(0.1, Double.parseDouble(thresholdField.getText().trim())) * 1_000_000; } catch (Exception ignored) {}
+            try { autoPayAmount = Math.max(0.1, Double.parseDouble(payAmountField.getText().trim())) * 1_000_000; } catch (Exception ignored) {}
+            try { minProfit = Math.max(0.1, Double.parseDouble(minProfitField.getText().trim())) * 1_000_000; } catch (Exception ignored) {}
+            try { refreshIntervalSec = Math.max(15, Integer.parseInt(refreshField.getText().trim())); } catch (Exception ignored) {}
+            try {
+                minRandomTick = Math.max(3, Integer.parseInt(tickField.getText().trim()));
+                maxRandomTick = minRandomTick + 3;
+            } catch (Exception ignored) {}
             mod.saveConfig(MinecraftClient.getInstance());
         }
 
         @Override
-        public void close() {
-            applyValues();
-            super.close();
-        }
+        public void close() { applyValues(); super.close(); }
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            ctx.fill(0, 0, this.width, this.height, 0xA0000000);
+            ctx.fill(0, 0, this.width, this.height, 0x88000000);
+            int cx = this.width / 2, px = cx - 168, py = (this.height - 216) / 2, pw = 336, ph = 216;
+
+            // Khung Dashboard Đen Viền Neon Vàng - Xanh Cyan
+            ctx.fill(px - 2, py - 2, px + pw + 2, py + ph + 2, 0xFF00E5FF);
+            ctx.fill(px, py, px + pw, py + ph, 0xF20D1117);
+            ctx.fill(px, py, px + pw, py + 28, 0xFF161B22);
+            ctx.fill(px, py + 28, px + pw, py + 29, 0xFFFFAA00);
+            ctx.fill(cx - 1, py + 34, cx, py + 180, 0x44FFFFFF);
+
+            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal("§6§l⚡ BẢNG CÀI ĐẶT AUTO FLIP ELYTRA (F9) ⚡"), cx, py + 6, 0xFFFFFF);
+            String statLine = "§7Đã bán: §b" + mod.soldCount + " §8| §7Tổng lời: §e+" + mod.formatMoney(mod.totalProfit) + " §8| §7Quỹ Pay: §a" + mod.formatMoney(mod.unpaidProfitPool) + "/" + mod.formatMoney(autoPayThreshold);
+            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal(statLine), cx, py + 17, 0xFFFFFF);
+
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§b§l[ BẬT / TẮT TÍNH NĂNG ]"), cx - 158, py + 36, 0xFFFFFF);
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§e§l[ THÔNG SỐ & AUTO PAY ]"), cx + 8, py + 36, 0xFFFFFF);
+
+            int rowY = py + 55, labelX = cx + 8;
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fNgười nhận Pay:"), labelX, rowY, 0xFFFFFF);
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fMốc lời Pay (M):"), labelX, rowY + 22, 0xFFFFFF);
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fSố tiền Pay (M):"), labelX, rowY + 44, 0xFFFFFF);
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fLời tối thiểu (M):"), labelX, rowY + 66, 0xFFFFFF);
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fLàm mới (Giây):"), labelX, rowY + 88, 0xFFFFFF);
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fTốc độ (Tick):"), labelX, rowY + 110, 0xFFFFFF);
+
             super.render(ctx, mouseX, mouseY, delta);
-            int cx = this.width / 2;
-            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal("§6§lBẢNG ĐIỀU KHIỂN AUTO FLIP ELYTRA (F9)"), cx, 14, 0xFFFFFF);
-            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fTên người nhận Pay:"), cx - 105, 112, 0xFFFFFF);
-            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fMốc lời thì Pay (M):"), cx - 105, 134, 0xFFFFFF);
-            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fSố tiền Pay (M):"), cx - 105, 156, 0xFFFFFF);
-            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§fLời tối thiểu / 1 cái (M):"), cx - 105, 178, 0xFFFFFF);
         }
     }
 }
 // === HOÀN TẤT 100% ===
+                                           
