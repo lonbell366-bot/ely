@@ -120,7 +120,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         AH_MONITOR_WAIT, AH_CHECK_OPEN, AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, AH_YOUR_ITEMS_INSPECT, AH_WAIT_RELIST_INV
     }
 // === HẾT PHẦN 1 ===
-    @Override
+        @Override
     public void onInitializeClient() {
         toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "Bật/Tắt Auto Flip (F6)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, "Donut Elytra Flip"
@@ -285,7 +285,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (!tickScanAndCreateOrder(client)) tickMonitorClaimAndSell(client);
     }
 // === HẾT PHẦN 2 ===
-        private boolean tickScanAndCreateOrder(MinecraftClient client) {
+    private boolean tickScanAndCreateOrder(MinecraftClient client) {
         switch (state) {
             case PAUSE_VOLATILE_MARKET -> {
                 if (client.currentScreen != null) client.player.closeHandledScreen();
@@ -650,7 +650,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 // === HẾT PHẦN 4 ===
-           private void tickMonitorClaimAndSell(MinecraftClient client) {
+              private void tickMonitorClaimAndSell(MinecraftClient client) {
         switch (state) {
             case SUBMIT_SIGN_GUI -> {
                 if (client.currentScreen instanceof AbstractSignEditScreen signScreen) {
@@ -804,7 +804,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transition(BotState.MONITOR_AH_OPEN, 3, 5, "§aTiếp tục canh đơn...");
             }
 // === HẾT PHẦN 5 ===
-                  // HỦY ORDER SIÊU TỐC: HỦY XONG LÀ QUAY RA QUÉT AH & ORDER NGAY LẬP TỨC (0 GIÂY CHỜ)
+                      // HỦY ORDER SIÊU TỐC: HỦY XONG LÀ QUAY RA QUÉT AH & ORDER NGAY LẬP TỨC (0 GIÂY CHỜ)
             case CANCEL_ORDER_OPEN -> {
                 if (client.currentScreen != null) { client.player.closeHandledScreen(); transition(BotState.CANCEL_ORDER_OPEN, 2, 4, "§cĐóng bảng cũ..."); return; }
                 cmdCooldownTicks = 0; sendCommandSafe(client, "order"); guiWaitRetries = 0;
@@ -944,7 +944,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else transition(BotState.SELL_SELECT_HOTBAR_SLOT, 4, 6, "§eThử lại /ah sell...");
             }
 // === HẾT PHẦN 6 ===
-                     case AH_MONITOR_WAIT -> {
+                    case AH_MONITOR_WAIT -> {
                 monitorTicksElapsed++;
                 statusText = "§dChờ mua AH " + formatMoney(myListedAhPrice) + " (" + (monitorTicksElapsed / 20) + "/" + refreshIntervalSec + "s)";
                 if (monitorTicksElapsed >= refreshIntervalSec * 20) { forceAhRefresh60s = true; cmdCooldownTicks = 0; transition(BotState.AH_CHECK_OPEN, 2, 4, "§6Đủ " + refreshIntervalSec + "s! Xem giá & bán lại..."); return; }
@@ -1091,7 +1091,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         } catch (Exception ignored) {}
     }
 // === HẾT PHẦN 7 ===
-          private double getPlayerBalance(MinecraftClient client) {
+            private double getPlayerBalance(MinecraftClient client) {
         if (client.world == null) return -1;
         try {
             Scoreboard sb = client.world.getScoreboard();
@@ -1378,7 +1378,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         return -1;
     }
 // === HẾT PHẦN 9A - DÁN TIẾP PHẦN 9B NGAY DƯỚI DÒNG NÀY ===
-        private boolean needsAmountInput(MinecraftClient client) {
+              private boolean needsAmountInput(MinecraftClient client) {
         if (!(client.currentScreen instanceof HandledScreen<?> s) || slotSetAmountBtn >= s.getScreenHandler().slots.size()) return false;
         ItemStack stack = s.getScreenHandler().getSlot(slotSetAmountBtn).getStack();
         if (stack.isEmpty()) return false;
@@ -1454,7 +1454,7 @@ public class ElytraFlipClient implements ClientModInitializer {
     private String toCommandPrice(double a) { long r = Math.round(a); return (r % 1_000_000 == 0) ? (r / 1_000_000) + "m" : String.valueOf(r); }
     private void logChat(MinecraftClient client, String msg) { if (client.player != null) client.player.sendMessage(Text.literal("§6§l[ElytraFlip] §r" + msg), false); }
 
-    // GIAO DIỆN DASHBOARD F9 SIÊU ĐẸP (PHONG CÁCH CYBERPUNK / LUNAR CLIENT)
+    // GIAO DIỆN DASHBOARD F9 SẮC NÉT 100% (ĐÃ TẮT BLUR SHADER CỦA 1.21.4)
     public static class FlipConfigScreen extends Screen {
         private final ElytraFlipClient mod;
         private TextFieldWidget targetField, thresholdField, payAmountField, minProfitField, refreshField, tickField;
@@ -1467,6 +1467,10 @@ public class ElytraFlipClient implements ClientModInitializer {
         private String btnTxt(String label, boolean on) {
             return (on ? "§a● " : "§c○ ") + "§f" + label + ": " + (on ? "§a§lBẬT" : "§c§lTẮT");
         }
+
+        // Chặn Minecraft 1.21.4 tự động làm mờ (Blur) giao diện của bảng F9
+        @Override
+        public void renderBackground(DrawContext ctx, int mouseX, int mouseY, float delta) {}
 
         @Override
         protected void init() {
@@ -1548,40 +1552,39 @@ public class ElytraFlipClient implements ClientModInitializer {
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            ctx.fill(0, 0, this.width, this.height, 0xA805070B);
+            ctx.fill(0, 0, this.width, this.height, 0xB005070B);
             int cx = this.width / 2, px = cx - 180, py = (this.height - 236) / 2, pw = 360, ph = 236;
 
-            // Khung viền kép phát sáng Neon Cyan & Gold
-            ctx.fill(px - 3, py - 3, px + pw + 3, py + ph + 3, 0x4400E5FF);
-            ctx.fill(px - 1, py - 1, px + pw + 1, py + ph + 1, 0xFF00E5FF);
+            ctx.fill(px - 2, py - 2, px + pw + 2, py + ph + 2, 0xFF00E5FF);
             ctx.fill(px, py, px + pw, py + ph, 0xF50B0F17);
-
-            // Header & Thanh Stat Cards
             ctx.fill(px, py, px + pw, py + 42, 0xFF121824);
             ctx.fill(px, py + 42, px + pw, py + 43, 0xFFFFAA00);
-            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal("§6§l✦ DONUT ELYTRA FLIP §b§lPRO DASHBOARD §7(F9) ✦"), cx, py + 7, 0xFFFFFF);
-
-            String sCard = "§7Đã bán: §b§l" + mod.soldCount + "  §8|  §7Tổng lời: §e§l+" + mod.formatMoney(mod.totalProfit)
-                    + "  §8|  §7Tốc độ: §d§l+" + mod.formatMoney(mod.getProfitPerHour()) + "/h  §8|  §7Quỹ Pay: §a§l" + mod.formatMoney(mod.unpaidProfitPool);
-            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal(sCard), cx, py + 24, 0xFFFFFF);
-
-            // 2 Khung Panel Trái & Phải
-            ctx.fill(cx - 174, py + 48, cx - 4, py + 198, 0x88161F2E);
-            ctx.fill(cx + 4, py + 48, cx + 174, py + 198, 0x88161F2E);
-            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§b§l⚙ CÔNG TẮC TÍNH NĂNG"), cx - 168, py + 51, 0xFFFFFF);
-            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§e§l💸 CẤU HÌNH & AUTO PAY"), cx + 10, py + 51, 0xFFFFFF);
+            ctx.fill(cx - 174, py + 48, cx - 4, py + 198, 0x99161F2E);
+            ctx.fill(cx + 4, py + 48, cx + 174, py + 198, 0x99161F2E);
 
             int rowY = py + 67, labelX = cx + 10;
             String[] labels = {"§fTên nhận Pay:", "§fĐủ lời thì Pay (M):", "§fSố tiền Pay (M):", "§fLời tối thiểu (M):", "§fHủy làm mới (s):", "§fĐộ trễ tay (Tick):"};
             for (int i = 0; i < labels.length; i++) {
                 int ry = rowY + i * 22;
-                ctx.fill(cx + 8, ry - 4, cx + 170, ry + 14, 0x66090D14);
-                ctx.drawTextWithShadow(this.textRenderer, Text.literal(labels[i]), labelX, ry, 0xFFFFFF);
+                ctx.fill(cx + 8, ry - 4, cx + 170, ry + 14, 0x88090D14);
             }
 
+            // Vẽ các nút và ô nhập trước, sau đó vẽ toàn bộ chữ lên lớp trên cùng để nét căng 100%
             super.render(ctx, mouseX, mouseY, delta);
+
+            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal("§6§l✦ DONUT ELYTRA FLIP §b§lPRO DASHBOARD §7(F9) ✦"), cx, py + 7, 0xFFFFFF);
+            String sCard = "§7Đã bán: §b§l" + mod.soldCount + "  §8|  §7Tổng lời: §e§l+" + mod.formatMoney(mod.totalProfit)
+                    + "  §8|  §7Tốc độ: §d§l+" + mod.formatMoney(mod.getProfitPerHour()) + "/h  §8|  §7Quỹ Pay: §a§l" + mod.formatMoney(mod.unpaidProfitPool);
+            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal(sCard), cx, py + 24, 0xFFFFFF);
+
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§b§l⚙ CÔNG TẮC TÍNH NĂNG"), cx - 168, py + 51, 0xFFFFFF);
+            ctx.drawTextWithShadow(this.textRenderer, Text.literal("§e§l💸 CẤU HÌNH & AUTO PAY"), cx + 10, py + 51, 0xFFFFFF);
+
+            for (int i = 0; i < labels.length; i++) {
+                ctx.drawTextWithShadow(this.textRenderer, Text.literal(labels[i]), labelX, rowY + i * 22, 0xFFFFFF);
+            }
         }
     }
 }
 // === HOÀN TẤT 100% ===
-            
+                
