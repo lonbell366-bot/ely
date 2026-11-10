@@ -56,9 +56,10 @@ public class ElytraFlipClient implements ClientModInitializer {
     public static String ahSearchCmd = "ah elytra mending", autoPayTarget = "";
     public static double minProfit = 2_000_000, stopLossReduction = 1_000_000, outbidSpreadThreshold = 3_000_000, outbidStep = 1_000_000;
     public static double maxCapital = 100_000_000_000.0, ahTaxPercent = 0.0, autoPayThreshold = 10_000_000, autoPayAmount = 10_000_000;
-    public static int stopLossCompetitorCount = 3, minElytraPerPage = 3, orderQuantity = 1, ahYourItemsCheckSec = 35;
-    public static int refreshIntervalSec = 70, discountWaitSec = 150, retryScanSec = 9, volatilePauseSec = 300, minRandomTick = 9, maxRandomTick = 22;
-    public static boolean showHud = true, noGraphicsMode = true, antiAfkEnabled = true, autoLogOnPlayer = false;
+    public static int stopLossCompetitorCount = 3, minElytraPerPage = 3, orderQuantity = 1, ahYourItemsCheckSec = 25;
+    // Chuẩn tốc độ nhanh 0.3s (6 ticks = 300ms) kèm dao động ngẫu nhiên 5 - 10 ticks chống Ban
+    public static int refreshIntervalSec = 60, discountWaitSec = 150, retryScanSec = 6, volatilePauseSec = 300, minRandomTick = 5, maxRandomTick = 10;
+    public static boolean showHud = true, noGraphicsMode = true, antiAfkEnabled = true, autoLogOnPlayer = true;
     public static boolean autoPayEnabled = false, autoOutbidEnabled = true, enableAhPage2 = true, autoDiscountEnabled = true, antiVolatileEnabled = true;
 
     public static int slotYourOrdersBtn = 51, slotNewOrderBtn = 9, slotChooseItemBtn = 12, slotSearchSignBtn = 50;
@@ -80,21 +81,22 @@ public class ElytraFlipClient implements ClientModInitializer {
     private String pendingSignText = "", pendingBountyCmd = "", statusText = "§cĐã Tắt";
     private int waitTicks = 0, guiWaitRetries = 0, ahWatchLoops = 0, moneyWaitLoops = 0, cmdCooldownTicks = 0, ahCmdCooldownTicks = 0;
     private int lastReadSyncId = -1, guiSettleTicks = 0, maintenanceTickCounter = 0;
-    private int antiAfkJumpTimer = 0, antiAfkJumpHoldTicks = 0, nextRandomJumpTarget = 180;
-    private int cyclesSinceLastBreak = 0, nextBreakCycleTarget = 12, microBreakTicksRemaining = 0, cameraPanTimer = 0;
+    private int antiAfkJumpTimer = 0, antiAfkJumpHoldTicks = 0, nextRandomJumpTarget = 160;
+    private int cyclesSinceLastBreak = 0, nextBreakCycleTarget = 18, microBreakTicksRemaining = 0, cameraPanTimer = 0;
     private float targetYawStep = 0.0f, targetPitchStep = 0.0f;
     private int cameraPanTicksLeft = 0;
-    private int monitorTicksElapsed = 0, nextCheckTickTarget = 600, volatileTicksRemaining = 0, soldCount = 0;
-    private int currentRefreshTargetTicks = 1400, currentDiscountWaitTargetSec = 150;
+    private int monitorTicksElapsed = 0, nextCheckTickTarget = 500, volatileTicksRemaining = 0, soldCount = 0;
+    private int currentRefreshTargetTicks = 1200, currentDiscountWaitTargetSec = 150;
     private int currentAhWatchMaxLoops = 14, currentMoneyWaitMaxLoops = 14;
     private int page1CountAtOrBelow = 0, page1CompetitorsBelowTarget = 0, enchantRetryCount = 0;
-    private long lastPriceSnapshotHash = -1, lastClickTimeMs = 0, nextAllowedClickDelayMs = 480, lastUsedDelayMs = 0, ahListingStartMs = 0;
+    private long lastPriceSnapshotHash = -1, lastClickTimeMs = 0, nextAllowedClickDelayMs = 280, lastUsedDelayMs = 0, ahListingStartMs = 0;
     private long accumulatedActiveMs = 0, lastResumeTimeMs = 0, lastSaleRecordedMs = 0;
     private double unpaidProfitPool = 0, ahPriceDropTotal = 0, page1LowestAh = -1, lowestAhPrice = -1, highestOrderPrice = -1;
     private double myOrderPrice = 0, finalAhSellPrice = 0, myListedAhPrice = 0, pendingRelistPrice = 0, lastFailedOrderPrice = -1, lastProfit = 0, totalProfit = 0;
 
     private final List<Double> recentAhPrices = new ArrayList<>(), recentOrderPrices = new ArrayList<>();
     private final Random random = new Random();
+    private static final Pattern VALID_PLAYER_NAME = Pattern.compile("^\\.?[a-zA-Z0-9_]{3,16}$");
     private static final Pattern EACH_PRICE_PATTERN = Pattern.compile("\\$\\s*([0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)\\s*([KMBkmb])?\\s*(?:each|/item|/ea)", Pattern.CASE_INSENSITIVE);
     private static final Pattern EXPLICIT_PRICE_PATTERN = Pattern.compile("(?:price|giá|cost|buy|worth)\\s*:?\\s*\\$\\s*([0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)\\s*([KMBkmb])?", Pattern.CASE_INSENSITIVE);
     private static final Pattern PRICE_PATTERN = Pattern.compile("\\$\\s*([0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)\\s*([KMBkmb])?");
@@ -114,7 +116,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         BOUNTY_SEND_CMD, BOUNTY_CLICK_GREEN_CONFIRM
     }
 // === HẾT PHẦN 1 ===
-            @Override
+    @Override
     public void onInitializeClient() {
         toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding("Bật/Tắt Auto Flip (F6)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F6, "Donut Elytra Flip"));
         menuKey = KeyBindingHelper.registerKeyBinding(new KeyBinding("Mở Bảng Settings (F9)", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F9, "Donut Elytra Flip"));
@@ -125,23 +127,23 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 
     private int rollNextRefreshTargetTicks() {
-        int jitterSec = -9 + random.nextInt(24);
-        return Math.max(25, refreshIntervalSec + jitterSec) * 20 + random.nextInt(25);
+        int jitterSec = -6 + random.nextInt(15);
+        return Math.max(20, refreshIntervalSec + jitterSec) * 20 + random.nextInt(20);
     }
 
     private int rollNextDiscountWaitSec() {
-        int jitterSec = -12 + random.nextInt(32);
-        return Math.max(25, discountWaitSec + jitterSec);
+        int jitterSec = -10 + random.nextInt(25);
+        return Math.max(20, discountWaitSec + jitterSec);
     }
 
     private int rollNextYourItemsCheckDeltaTicks() {
-        int jitterSec = -7 + random.nextInt(18);
-        return Math.max(18, ahYourItemsCheckSec + jitterSec) * 20 + random.nextInt(25);
+        int jitterSec = -4 + random.nextInt(11);
+        return Math.max(14, ahYourItemsCheckSec + jitterSec) * 20 + random.nextInt(20);
     }
 
     private int rollRetryScanMinTicks() {
-        int jitterSec = -3 + random.nextInt(9);
-        return Math.max(6, retryScanSec + jitterSec) * 20 + random.nextInt(25);
+        int jitterSec = -2 + random.nextInt(5);
+        return Math.max(4, retryScanSec + jitterSec) * 20 + random.nextInt(15);
     }
 
     private void onChatMessage(Text message) {
@@ -172,8 +174,8 @@ public class ElytraFlipClient implements ClientModInitializer {
     private void resetAhPagination() {
         clickedNextPage = false; page1LowestAh = -1; page1CountAtOrBelow = 0; page1CompetitorsBelowTarget = 0;
         lastPriceSnapshotHash = -1; guiSettleTicks = 0;
-        currentAhWatchMaxLoops = 10 + random.nextInt(8);
-        currentMoneyWaitMaxLoops = 11 + random.nextInt(8);
+        currentAhWatchMaxLoops = 10 + random.nextInt(6);
+        currentMoneyWaitMaxLoops = 10 + random.nextInt(6);
     }
 
     private void releaseAllAfkKeys(MinecraftClient c) {
@@ -184,30 +186,28 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
     }
 
-    // XOAY CAMERA MƯỢT MÀ THEO HƯỚNG NGẪU NHIÊN (CHỐNG CỐ ĐỊNH TỌA ĐỘ YAW/PITCH)
     private void humanizeCameraMovements(MinecraftClient c) {
         if (c.player == null) return;
-        cameraPanTicksLeft = 5 + random.nextInt(9);
-        targetYawStep = (random.nextFloat() - 0.5f) * (2.2f + random.nextFloat() * 4.5f);
-        targetPitchStep = (random.nextFloat() - 0.5f) * (1.1f + random.nextFloat() * 2.2f);
+        cameraPanTicksLeft = 4 + random.nextInt(6);
+        targetYawStep = (random.nextFloat() - 0.5f) * (2.0f + random.nextFloat() * 4.0f);
+        targetPitchStep = (random.nextFloat() - 0.5f) * (1.0f + random.nextFloat() * 2.0f);
     }
 
     private void tickSmoothCameraPan(MinecraftClient c) {
         if (c.player == null) return;
         if (cameraPanTicksLeft > 0) {
             cameraPanTicksLeft--;
-            c.player.setYaw(c.player.getYaw() + targetYawStep + (random.nextFloat() - 0.5f) * 0.35f);
-            float nextPitch = c.player.getPitch() + targetPitchStep + (random.nextFloat() - 0.5f) * 0.2f;
+            c.player.setYaw(c.player.getYaw() + targetYawStep + (random.nextFloat() - 0.5f) * 0.3f);
+            float nextPitch = c.player.getPitch() + targetPitchStep + (random.nextFloat() - 0.5f) * 0.18f;
             c.player.setPitch(Math.max(-58.0f, Math.min(58.0f, nextPitch)));
             return;
         }
-        if (c.currentScreen == null && ++cameraPanTimer >= 55 + random.nextInt(110)) {
+        if (c.currentScreen == null && ++cameraPanTimer >= 45 + random.nextInt(90)) {
             cameraPanTimer = 0;
             humanizeCameraMovements(c);
         }
     }
 
-    // ANTI-AFK LÀ NHẢY (JUMP) KẾT HỢP XOAY CAMERA RANDOM
     private void tickSmartAntiAfk(MinecraftClient c) {
         tickSmoothCameraPan(c);
         if (!antiAfkEnabled || c.player == null || c.options == null || c.currentScreen != null) {
@@ -221,7 +221,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         }
         if (++antiAfkJumpTimer >= nextRandomJumpTarget) {
             antiAfkJumpTimer = 0;
-            nextRandomJumpTarget = 130 + random.nextInt(260);
+            nextRandomJumpTarget = 120 + random.nextInt(220);
             antiAfkJumpHoldTicks = 2 + random.nextInt(3);
             humanizeCameraMovements(c);
             if (random.nextInt(3) == 0) c.player.swingHand(Hand.MAIN_HAND);
@@ -236,12 +236,12 @@ public class ElytraFlipClient implements ClientModInitializer {
             lastResumeTimeMs = System.currentTimeMillis();
             recentAhPrices.clear(); recentOrderPrices.clear();
             verifyingStabilityAfterPause = false; lastFailedOrderPrice = -1;
-            nextRandomJumpTarget = 120 + random.nextInt(200);
-            cyclesSinceLastBreak = 0; nextBreakCycleTarget = 10 + random.nextInt(9);
+            nextRandomJumpTarget = 110 + random.nextInt(180);
+            cyclesSinceLastBreak = 0; nextBreakCycleTarget = 15 + random.nextInt(11);
             currentRefreshTargetTicks = rollNextRefreshTargetTicks();
             currentDiscountWaitTargetSec = rollNextDiscountWaitSec();
-            logChat(client, "§aĐã BẬT Auto Flip (Ultra Anti-Ban + Xoay Camera + Delay /ah)!");
-            restartCycleSafeHuman(client, "§aĐang khởi động an toàn...");
+            logChat(client, "§aĐã BẬT Auto Flip (Tốc độ 0.3s + Anti-Ban + AutoLog Chuẩn)!");
+            restartCycleSafeHuman(client, "§aĐang khởi động 0.3s...");
         } else {
             releaseAllAfkKeys(client);
             accumulatedActiveMs += (System.currentTimeMillis() - lastResumeTimeMs);
@@ -263,40 +263,57 @@ public class ElytraFlipClient implements ClientModInitializer {
         humanizeCameraMovements(client);
         if (!pendingBountyCmd.isEmpty()) {
             stateAfterBounty = BotState.SCAN_AH_OPEN;
-            transitionRandom(BotState.BOUNTY_SEND_CMD, 20, 36, "§aChuẩn bị /bounty add...");
+            transitionRandom(BotState.BOUNTY_SEND_CMD, 10, 16, "§aChuẩn bị /bounty add...");
             return;
         }
-        // Dừng hết hoạt động & xoay camera ngẫu nhiên sau mỗi 10 - 18 vòng
         if (++cyclesSinceLastBreak >= nextBreakCycleTarget) {
             cyclesSinceLastBreak = 0;
-            nextBreakCycleTarget = 10 + random.nextInt(9);
-            microBreakTicksRemaining = (14 + random.nextInt(16)) * 20 + random.nextInt(20);
+            nextBreakCycleTarget = 15 + random.nextInt(11);
+            microBreakTicksRemaining = (6 + random.nextInt(8)) * 20 + random.nextInt(20);
             state = BotState.MICRO_BREAK_WAIT;
             return;
         }
-        ahCmdCooldownTicks = Math.max(ahCmdCooldownTicks, 65 + random.nextInt(45));
-        transitionRandom(BotState.SCAN_AH_OPEN, 55, 95, reasonMsg);
+        ahCmdCooldownTicks = Math.max(ahCmdCooldownTicks, 20 + random.nextInt(14));
+        transitionRandom(BotState.SCAN_AH_OPEN, 18, 28, reasonMsg);
     }
 
+    // FIX TRIỆT ĐỂ AUTO LOG GẶP NGƯỜI: PHÁT HIỆN CẢ JAVA + BEDROCK & ÉP NGẮT KẾT NỐI NGAY LẬP TỨC
     private boolean checkAutoLogOnPlayer(MinecraftClient client) {
         if (!autoLogOnPlayer || client.world == null || client.player == null) return false;
         for (PlayerEntity other : client.world.getPlayers()) {
             if (other == null || other == client.player || other.getUuid().equals(client.player.getUuid())) continue;
-            String otherName = other.getName().getString().trim();
-            if (otherName.isEmpty() || (!autoPayTarget.isBlank() && otherName.equalsIgnoreCase(autoPayTarget.trim()))) continue;
-            if (client.getNetworkHandler() != null && client.getNetworkHandler().getPlayerListEntry(other.getUuid()) == null) continue;
+            if (other.isSpectator() || other.isRemoved() || other.getHealth() <= 0) continue;
+            String otherName = other.getName().getString().replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim();
+            if (otherName.isEmpty() || otherName.equalsIgnoreCase(client.player.getName().getString().trim())) continue;
+            if (!autoPayTarget.isBlank() && otherName.equalsIgnoreCase(autoPayTarget.trim())) continue;
+            if (!VALID_PLAYER_NAME.matcher(otherName).matches()) continue;
+
             int dist = (int) Math.round(client.player.distanceTo(other));
+            if (dist > 160) continue;
+
             releaseAllAfkKeys(client);
-            if (running) { accumulatedActiveMs += (System.currentTimeMillis() - lastResumeTimeMs); running = false; }
-            state = BotState.IDLE; statusText = "§cAuto Log (Gặp " + otherName + ")";
-            if (client.getNetworkHandler() != null && client.getNetworkHandler().getConnection() != null)
-                client.getNetworkHandler().getConnection().disconnect(Text.literal("§6§l⚡ [AUTO LOG BẢO VỆ] ⚡\n\n§fPhát hiện người chơi: §c§l" + otherName + " §7(Cách §e" + dist + "m§7)\n§aĐã tự động thoát khỏi server an toàn!"));
+            if (running) {
+                accumulatedActiveMs += (System.currentTimeMillis() - lastResumeTimeMs);
+                running = false;
+            }
+            state = BotState.IDLE;
+            statusText = "§cAuto Log (Gặp " + otherName + ")";
+            Text kickMsg = Text.literal("§6§l⚡ [AUTO LOG BẢO VỆ] ⚡\n\n§fPhát hiện người chơi: §c§l" + otherName + " §7(Cách §e" + dist + "m§7)\n§aĐã tự động thoát khỏi server an toàn!");
+            try {
+                if (client.player != null) client.player.closeHandledScreen();
+                client.setScreen(null);
+                if (client.getNetworkHandler() != null && client.getNetworkHandler().getConnection() != null) {
+                    client.getNetworkHandler().getConnection().disconnect(kickMsg);
+                    client.getNetworkHandler().getConnection().handleDisconnection();
+                }
+                if (client.world != null) client.world.disconnect();
+            } catch (Exception ignored) {}
             return true;
         }
         return false;
     }
 // === HẾT PHẦN 2 ===
-            public void restoreWorldBlocks(MinecraftClient client) {
+           public void restoreWorldBlocks(MinecraftClient client) {
         if (!blocksCurrentlyStripped || client == null) return;
         blocksCurrentlyStripped = false;
         try {
@@ -405,7 +422,8 @@ public class ElytraFlipClient implements ClientModInitializer {
             maintenanceTickCounter = 0; recentAhPrices.clear(); recentOrderPrices.clear(); lastReadSyncId = -1;
         }
         stripWorldGraphicsDirectly(client);
-        if (running && checkAutoLogOnPlayer(client)) return;
+        // Kiểm tra Auto Log ngay cả khi đang mở bảng GUI
+        if (autoLogOnPlayer && checkAutoLogOnPlayer(client)) return;
 
         while (menuKey.wasPressed()) {
             releaseAllAfkKeys(client);
@@ -428,21 +446,21 @@ public class ElytraFlipClient implements ClientModInitializer {
             if (client.currentScreen != null) client.player.closeHandledScreen();
             double bal = getPlayerBalance(client);
             logChat(client, "§c§l[Không Đủ Tiền] §eTiền có: §a" + (bal > 0 ? formatMoney(bal) : "Thiếu") + " §c< Cần: §b" + formatMoney(myOrderPrice) + "§c! Đang canh giá Order...");
-            transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 40, 65, "§cKhông đủ tiền! Đang canh giá Order...");
+            transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 20, 32, "§cKhông đủ tiền! Đang canh giá Order...");
             return;
         }
         if (hasActiveOrder && (state == BotState.MONITOR_WAIT || state == BotState.MONITOR_AH_OPEN || state == BotState.MONITOR_AH_READ || state == BotState.ORDER_POST_CONFIRM_CLOSE)) monitorTicksElapsed++;
-        if (chatAhSoldFlag) { restartCycleSafeHuman(client, "§aĐã bán xong! Nghỉ nhịp rồi quét..."); return; }
+        if (chatAhSoldFlag) { restartCycleSafeHuman(client, "§aĐã bán xong! Bắt đầu vòng mới..."); return; }
         if (!hasActiveAhListing && !isSellingOrAhMonitoringState() && findElytraInInventory(client) != -1) {
             chatOrderCompletedFlag = false; hasActiveOrder = false;
             if (client.currentScreen != null) client.player.closeHandledScreen();
-            transitionRandom(BotState.SELL_SCAN_AH_OPEN, 45, 75, "§dCó Elytra -> Chuẩn bị bán AH...");
+            transitionRandom(BotState.SELL_SCAN_AH_OPEN, 18, 28, "§dCó Elytra -> Chuẩn bị bán AH...");
             return;
         }
         if (chatOrderCompletedFlag && !hasActiveAhListing && !isSellingOrAhMonitoringState() && state != BotState.CLAIM_OPEN_ORDER && state != BotState.CLAIM_CLICK_YOUR_ORDERS && state != BotState.CLAIM_CLICK_COMPLETED_ELYTRA && state != BotState.CLAIM_CLICK_COLLECT_BOX && state != BotState.CLAIM_TAKE_ELYTRA_TO_HOTBAR) {
             chatOrderCompletedFlag = false;
             if (client.currentScreen != null) client.player.closeHandledScreen();
-            transitionRandom(BotState.CLAIM_OPEN_ORDER, 35, 55, "§aĐơn xong! Mở /order...");
+            transitionRandom(BotState.CLAIM_OPEN_ORDER, 16, 26, "§aĐơn xong! Mở /order...");
             return;
         }
         if (waitTicks > 0) { waitTicks--; return; }
@@ -451,33 +469,32 @@ public class ElytraFlipClient implements ClientModInitializer {
 
     private boolean tickScanAndCreateOrder(MinecraftClient client) {
         switch (state) {
-            // TẠM DỪNG MỌI HOẠT ĐỘNG & XOAY CAMERA NGẪU NHIÊN NHƯ NGƯỜI THẬT ĐANG QUAN SÁT XUNG QUANH
             case MICRO_BREAK_WAIT -> {
                 if (client.currentScreen != null) client.player.closeHandledScreen();
                 if (microBreakTicksRemaining > 0) {
                     microBreakTicksRemaining--;
-                    if (microBreakTicksRemaining % (18 + random.nextInt(15)) == 0) {
+                    if (microBreakTicksRemaining % (15 + random.nextInt(12)) == 0) {
                         humanizeCameraMovements(client);
                         if (random.nextInt(3) == 0 && client.player != null) client.player.swingHand(Hand.MAIN_HAND);
                     }
                     statusText = "§aDừng nghỉ & xoay Camera (" + (microBreakTicksRemaining / 20) + "s)";
                     return true;
                 }
-                ahCmdCooldownTicks = Math.max(ahCmdCooldownTicks, 60 + random.nextInt(40));
-                transitionRandom(BotState.SCAN_AH_OPEN, 30, 55, "§aHết nghỉ! Tiếp tục quét...");
+                ahCmdCooldownTicks = Math.max(ahCmdCooldownTicks, 20 + random.nextInt(15));
+                transitionRandom(BotState.SCAN_AH_OPEN, 14, 24, "§aHết nghỉ! Tiếp tục quét...");
                 return true;
             }
             case PAUSE_VOLATILE_MARKET -> {
                 if (client.currentScreen != null) client.player.closeHandledScreen();
                 if (volatileTicksRemaining > 0) { volatileTicksRemaining--; statusText = "§cGiá loạn! Chờ (" + (volatileTicksRemaining / 20) + "s)"; return true; }
                 recentAhPrices.clear(); recentOrderPrices.clear(); verifyingStabilityAfterPause = true;
-                transitionRandom(BotState.SCAN_AH_OPEN, 45, 75, "§eKiểm tra lại giá..."); return true;
+                transitionRandom(BotState.SCAN_AH_OPEN, 20, 32, "§eKiểm tra lại giá..."); return true;
             }
             case WAIT_ENOUGH_MONEY_OPEN -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 38, 60, "§cĐóng bảng cũ..."); return true; }
-                if (!sendCommandSafe(client, "order ely")) { transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 12, 22, statusText); return true; }
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 18, 28, "§cĐóng bảng cũ..."); return true; }
+                if (!sendCommandSafe(client, "order ely")) { transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 6, 12, statusText); return true; }
                 guiWaitRetries = 0; moneyWaitLoops = 0; resetAhPagination();
-                transitionRandom(BotState.WAIT_ENOUGH_MONEY_READ, 16, 26, "§eXem giá Order chờ đủ tiền..."); return true;
+                transitionRandom(BotState.WAIT_ENOUGH_MONEY_READ, 8, 14, "§eXem giá Order chờ đủ tiền..."); return true;
             }
             case WAIT_ENOUGH_MONEY_READ -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
@@ -492,78 +509,78 @@ public class ElytraFlipClient implements ClientModInitializer {
                             if (enough) {
                                 client.player.closeHandledScreen(); lastFailedOrderPrice = -1;
                                 logChat(client, "§a§l[Đã Đủ Tiền] §eĐủ tiền Order giá §b" + formatMoney(req) + "§e!");
-                                transitionRandom(BotState.SCAN_AH_OPEN, 55, 85, "§aĐã đủ tiền! Quét đặt Order..."); return true;
+                                transitionRandom(BotState.SCAN_AH_OPEN, 20, 32, "§aĐã đủ tiền! Quét đặt Order..."); return true;
                             }
                             statusText = "§cThiếu tiền (" + (bal > 0 ? formatMoney(bal) : "?") + "/" + formatMoney(totalReq) + ")";
-                            if (++moneyWaitLoops < currentMoneyWaitMaxLoops) transitionRandom(BotState.WAIT_ENOUGH_MONEY_READ, 14, 22, statusText);
-                            else { moneyWaitLoops = 0; client.player.closeHandledScreen(); transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 55, 90, statusText); }
+                            if (++moneyWaitLoops < currentMoneyWaitMaxLoops) transitionRandom(BotState.WAIT_ENOUGH_MONEY_READ, 8, 14, statusText);
+                            else { moneyWaitLoops = 0; client.player.closeHandledScreen(); transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 28, 45, statusText); }
                             return true;
                         }
                     }
-                } else { transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 45, 75, "§eMở lại /order ely..."); return true; }
-                if (++guiWaitRetries < 20 + random.nextInt(6)) transitionRandom(BotState.WAIT_ENOUGH_MONEY_READ, 6, 11, "§eĐợi tải giá Order...");
-                else { guiWaitRetries = 0; if (client.currentScreen != null) client.player.closeHandledScreen(); transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 55, 90, "§eLàm mới /order ely..."); }
+                } else { transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 22, 34, "§eMở lại /order ely..."); return true; }
+                if (++guiWaitRetries < 18 + random.nextInt(5)) transitionRandom(BotState.WAIT_ENOUGH_MONEY_READ, 4, 7, "§eĐợi tải giá Order...");
+                else { guiWaitRetries = 0; if (client.currentScreen != null) client.player.closeHandledScreen(); transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 28, 45, "§eLàm mới /order ely..."); }
                 return true;
             }
             case SCAN_AH_OPEN -> {
-                if (!pendingBountyCmd.isEmpty()) { stateAfterBounty = BotState.SCAN_AH_OPEN; transitionRandom(BotState.BOUNTY_SEND_CMD, 16, 28, "§aChuyển lời qua /bounty add..."); return true; }
+                if (!pendingBountyCmd.isEmpty()) { stateAfterBounty = BotState.SCAN_AH_OPEN; transitionRandom(BotState.BOUNTY_SEND_CMD, 8, 14, "§aChuyển lời qua /bounty add..."); return true; }
                 if (hasActiveAhListing) { state = BotState.AH_MONITOR_WAIT; return true; }
                 if (hasActiveOrder) { state = BotState.MONITOR_AH_OPEN; return true; }
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.SCAN_AH_OPEN, 45, 70, "§eĐóng bảng cũ..."); return true; }
-                if (!sendCommandSafe(client, ahSearchCmd)) { transitionRandom(BotState.SCAN_AH_OPEN, 14, 26, "§eĐợi delay /ah an toàn..."); return true; }
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.SCAN_AH_OPEN, 16, 26, "§eĐóng bảng cũ..."); return true; }
+                if (!sendCommandSafe(client, ahSearchCmd)) { transitionRandom(BotState.SCAN_AH_OPEN, 6, 12, "§eĐợi nhịp /ah..."); return true; }
                 lowestAhPrice = -1; resetAhPagination(); guiWaitRetries = 0;
-                transitionRandom(BotState.SCAN_AH_READ, 16, 26, "§eĐang mở /" + ahSearchCmd + "..."); return true;
+                transitionRandom(BotState.SCAN_AH_READ, 8, 14, "§eĐang mở /" + ahSearchCmd + "..."); return true;
             }
             case SCAN_AH_READ -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     int syncId = s.getScreenHandler().syncId; String title = s.getTitle().getString().toLowerCase();
                     if (syncId != lastReadSyncId && !title.contains("order") && isGuiFullySettled(client, s)) {
-                        if (clickedNextPage && title.contains("page 1") && ++guiWaitRetries < 14 + random.nextInt(5)) { transitionRandom(BotState.SCAN_AH_READ, 6, 11, "§eĐợi sang Trang 2..."); return true; }
+                        if (clickedNextPage && title.contains("page 1") && ++guiWaitRetries < 14 + random.nextInt(4)) { transitionRandom(BotState.SCAN_AH_READ, 4, 7, "§eĐợi sang Trang 2..."); return true; }
                         int validCount = countValidAhElytras(client, s); double pageLow = scanAhLowestPrice(client, s);
                         if (enableAhPage2 && !clickedNextPage && title.contains("page 1") && validCount < minElytraPerPage && hasNextPageButton(s)) {
                             int nextSlot = findSlotByName(client, "Next page", slotAhNextPageBtn);
                             if (clickSlotIfOpen(client, nextSlot, SlotActionType.PICKUP)) {
                                 page1LowestAh = pageLow; clickedNextPage = true; guiWaitRetries = 0; lastPriceSnapshotHash = -1; guiSettleTicks = 0;
                                 transitionHuman05s(BotState.SCAN_AH_READ, "§eTrang 1 ít Ely -> Sang Trang 2...");
-                            } else transitionRandom(BotState.SCAN_AH_READ, 4, 8, statusText);
+                            } else transitionRandom(BotState.SCAN_AH_READ, 2, 5, statusText);
                             return true;
                         }
                         lowestAhPrice = combineLowestPrice(page1LowestAh, pageLow);
                         if (lowestAhPrice > 0) {
                             lastReadSyncId = syncId; client.player.closeHandledScreen();
                             humanizeCameraMovements(client);
-                            transitionRandom(BotState.SCAN_ORDER_OPEN, 45, 75, "§eQua xem /order ely..."); return true;
+                            transitionRandom(BotState.SCAN_ORDER_OPEN, 16, 26, "§eQua xem /order ely..."); return true;
                         }
                     }
                 }
-                if (++guiWaitRetries < 22 + random.nextInt(6)) transitionRandom(BotState.SCAN_AH_READ, 6, 11, "§eĐợi đồng bộ giá AH...");
-                else { if (client.currentScreen != null) client.player.closeHandledScreen(); transitionRandom(BotState.SCAN_AH_OPEN, 65, 100, "§cMở lại AH..."); }
+                if (++guiWaitRetries < 20 + random.nextInt(5)) transitionRandom(BotState.SCAN_AH_READ, 4, 7, "§eĐợi đồng bộ giá AH...");
+                else { if (client.currentScreen != null) client.player.closeHandledScreen(); transitionRandom(BotState.SCAN_AH_OPEN, 26, 40, "§cMở lại AH..."); }
                 return true;
             }
             case SCAN_ORDER_OPEN -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.SCAN_ORDER_OPEN, 38, 60, "§eĐợi đóng AH..."); return true; }
-                if (!sendCommandSafe(client, "order ely")) { transitionRandom(BotState.SCAN_ORDER_OPEN, 12, 22, "§eĐợi nhịp lệnh an toàn..."); return true; }
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.SCAN_ORDER_OPEN, 16, 26, "§eĐợi đóng AH..."); return true; }
+                if (!sendCommandSafe(client, "order ely")) { transitionRandom(BotState.SCAN_ORDER_OPEN, 6, 12, "§eĐợi nhịp lệnh..."); return true; }
                 highestOrderPrice = -1; resetAhPagination(); guiWaitRetries = 0;
-                transitionRandom(BotState.SCAN_ORDER_READ, 16, 26, "§eĐang mở /order ely..."); return true;
+                transitionRandom(BotState.SCAN_ORDER_READ, 8, 14, "§eĐang mở /order ely..."); return true;
             }
             case SCAN_ORDER_READ -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     int syncId = s.getScreenHandler().syncId; String title = s.getTitle().getString().toLowerCase();
                     if (syncId != lastReadSyncId && title.contains("order") && isGuiFullySettled(client, s) && hasAnyElytraWithPrice(client, s)) {
                         double price = scanOrderHighestPrice(client, s);
-                        if (price > 0) { lastReadSyncId = syncId; highestOrderPrice = price; transitionRandom(BotState.EVALUATE_INITIAL_PROFIT, 10, 18, "§eTính tiền lời..."); return true; }
+                        if (price > 0) { lastReadSyncId = syncId; highestOrderPrice = price; transitionRandom(BotState.EVALUATE_INITIAL_PROFIT, 5, 9, "§eTính tiền lời..."); return true; }
                     }
                 }
-                if (++guiWaitRetries < 23 + random.nextInt(6)) transitionRandom(BotState.SCAN_ORDER_READ, 6, 11, "§eĐợi đồng bộ giá Order...");
-                else { if (client.currentScreen != null) client.player.closeHandledScreen(); transitionRandom(BotState.SCAN_AH_OPEN, 65, 100, "§cQuét lại..."); }
+                if (++guiWaitRetries < 20 + random.nextInt(5)) transitionRandom(BotState.SCAN_ORDER_READ, 4, 7, "§eĐợi đồng bộ giá Order...");
+                else { if (client.currentScreen != null) client.player.closeHandledScreen(); transitionRandom(BotState.SCAN_AH_OPEN, 26, 40, "§cQuét lại..."); }
                 return true;
             }
 // === HẾT PHẦN 3 ===
-                       case EVALUATE_INITIAL_PROFIT -> {
+               case EVALUATE_INITIAL_PROFIT -> {
                 int retryMin = rollRetryScanMinTicks();
                 if (lowestAhPrice <= 0 || highestOrderPrice <= 0) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
-                    transitionRandom(BotState.SCAN_AH_OPEN, retryMin, retryMin + 55, "§cĐợi quét lại..."); return true;
+                    transitionRandom(BotState.SCAN_AH_OPEN, retryMin, retryMin + 35, "§cĐợi quét lại..."); return true;
                 }
                 recordPriceSample(lowestAhPrice, highestOrderPrice);
                 if (antiVolatileEnabled && isMarketPriceChaotic()) {
@@ -573,34 +590,34 @@ public class ElytraFlipClient implements ClientModInitializer {
                 }
                 if (verifyingStabilityAfterPause && recentAhPrices.size() < 2) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
-                    transitionRandom(BotState.SCAN_AH_OPEN, 65, 105, "§eKiểm tra ổn định lần 2..."); return true;
+                    transitionRandom(BotState.SCAN_AH_OPEN, 35, 55, "§eKiểm tra ổn định lần 2..."); return true;
                 }
                 verifyingStabilityAfterPause = false;
                 double rawDiff = lowestAhPrice - highestOrderPrice;
                 double planned = (autoOutbidEnabled && Math.round(rawDiff) >= Math.round(outbidSpreadThreshold)) ? (highestOrderPrice + outbidStep) : highestOrderPrice;
                 double totalReq = planned * orderQuantity, bal = getPlayerBalance(client);
                 if ((bal > 0 && bal < totalReq) || (lastFailedOrderPrice > 0 && totalReq >= lastFailedOrderPrice && (bal <= 0 || bal <= lastFailedOrderPrice))) {
-                    guiWaitRetries = 0; moneyWaitLoops = 0; transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 40, 65, "§cThiếu tiền! Canh Order..."); return true;
+                    guiWaitRetries = 0; moneyWaitLoops = 0; transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 18, 30, "§cThiếu tiền! Canh Order..."); return true;
                 }
                 double netProfit = calculateNetProfit(planned, lowestAhPrice);
                 logChat(client, "§7Order: §e" + formatMoney(highestOrderPrice) + " §7| AH: §a" + formatMoney(lowestAhPrice) + " §7| Đặt: §b" + formatMoney(planned) + " §7(Lời: §a+" + formatMoney(netProfit) + "§7)");
                 if (Math.round(netProfit) < Math.round(minProfit) || totalReq > maxCapital) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
                     humanizeCameraMovements(client);
-                    transitionRandom(BotState.SCAN_AH_OPEN, retryMin, retryMin + 60, "§eChưa đủ lời (Đợi ~" + (retryMin / 20) + "s)"); return true;
+                    transitionRandom(BotState.SCAN_AH_OPEN, retryMin, retryMin + 40, "§eChưa đủ lời (Đợi ~" + (retryMin / 20) + "s)"); return true;
                 }
                 myOrderPrice = planned; guiWaitRetries = 0; enchantRetryCount = 0;
                 transitionHuman05s(BotState.ORDER_CLICK_YOUR_ORDERS, "§bĐặt Order " + formatMoney(myOrderPrice) + "..."); return true;
             }
             case ORDER_CLICK_YOUR_ORDERS -> {
                 if (!(client.currentScreen instanceof HandledScreen<?>)) {
-                    if (sendCommandSafe(client, "order ely")) transitionRandom(BotState.ORDER_CLICK_YOUR_ORDERS, 14, 24, "§bMở lại trang Order...");
-                    else transitionRandom(BotState.ORDER_CLICK_YOUR_ORDERS, 10, 18, "§bĐợi mở Order...");
+                    if (sendCommandSafe(client, "order ely")) transitionRandom(BotState.ORDER_CLICK_YOUR_ORDERS, 8, 14, "§bMở lại trang Order...");
+                    else transitionRandom(BotState.ORDER_CLICK_YOUR_ORDERS, 6, 11, "§bĐợi mở Order...");
                     return true;
                 }
                 if (clickSlotIfOpen(client, findSlotByName(client, "Your Orders", slotYourOrdersBtn), SlotActionType.PICKUP)) {
                     guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_CLICK_NEW_ORDER, "§bBấm New Order...");
-                } else transitionRandom(BotState.ORDER_CLICK_YOUR_ORDERS, 3, 7, statusText);
+                } else transitionRandom(BotState.ORDER_CLICK_YOUR_ORDERS, 2, 4, statusText);
                 return true;
             }
             case ORDER_CLICK_NEW_ORDER -> {
@@ -614,25 +631,25 @@ public class ElytraFlipClient implements ClientModInitializer {
                             double p = extractUnitPrice(client, st); if (p > 0) myOrderPrice = p;
                             if (isOrderDeliveredInList(client, st)) {
                                 if (clickSlotIfOpen(client, existingSlot, SlotActionType.PICKUP)) { guiWaitRetries = 0; transitionHuman05s(BotState.CLAIM_CLICK_COLLECT_BOX, "§aĐơn cũ xong! Lấy Elytra..."); }
-                                else transitionRandom(BotState.ORDER_CLICK_NEW_ORDER, 3, 7, statusText);
+                                else transitionRandom(BotState.ORDER_CLICK_NEW_ORDER, 2, 4, statusText);
                                 return true;
                             }
                             if (!hasExactOrderEnchants(client, st)) {
                                 if (clickSlotIfOpen(client, existingSlot, SlotActionType.PICKUP)) { guiWaitRetries = 0; transitionHuman05s(BotState.CANCEL_ORDER_CLICK_RED_CANCEL, "§cHủy đơn thiếu Mending..."); }
-                                else transitionRandom(BotState.ORDER_CLICK_NEW_ORDER, 3, 7, statusText);
+                                else transitionRandom(BotState.ORDER_CLICK_NEW_ORDER, 2, 4, statusText);
                                 return true;
                             }
                             hasActiveOrder = true; monitorTicksElapsed = 0; guiWaitRetries = 0;
                             currentRefreshTargetTicks = rollNextRefreshTargetTicks();
-                            transitionRandom(BotState.ORDER_POST_CONFIRM_CLOSE, 12, 20, "§eĐóng Order qua canh AH..."); return true;
+                            transitionRandom(BotState.ORDER_POST_CONFIRM_CLOSE, 8, 14, "§eĐóng Order qua canh AH..."); return true;
                         }
                         if (clickSlotIfOpen(client, findSlotByName(client, "New Order", slotNewOrderBtn), SlotActionType.PICKUP)) {
                             guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_CLICK_ITEM_SLOT, "§bBấm Choose Item...");
-                        } else transitionRandom(BotState.ORDER_CLICK_NEW_ORDER, 3, 7, statusText);
+                        } else transitionRandom(BotState.ORDER_CLICK_NEW_ORDER, 2, 4, statusText);
                         return true;
                     }
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_CLICK_NEW_ORDER, 5, 10, "§bĐợi bảng Your Orders...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_CLICK_NEW_ORDER, 3, 6, "§bĐợi bảng Your Orders...");
                 else transitionHuman05s(BotState.ORDER_CLICK_YOUR_ORDERS, "§cThử lại Your Orders...");
                 return true;
             }
@@ -647,11 +664,11 @@ public class ElytraFlipClient implements ClientModInitializer {
                         }
                         if (clickSlotIfOpen(client, slotChooseItemBtn, SlotActionType.PICKUP)) {
                             guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_CLICK_SEARCH_SIGN, "§bBấm Search...");
-                        } else transitionRandom(BotState.ORDER_CLICK_ITEM_SLOT, 3, 7, statusText);
+                        } else transitionRandom(BotState.ORDER_CLICK_ITEM_SLOT, 2, 4, statusText);
                         return true;
                     }
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_CLICK_ITEM_SLOT, 5, 10, "§bĐợi bảng New Order...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_CLICK_ITEM_SLOT, 3, 6, "§bĐợi bảng New Order...");
                 else transitionHuman05s(BotState.ORDER_CLICK_NEW_ORDER, "§cThử lại New Order...");
                 return true;
             }
@@ -663,11 +680,11 @@ public class ElytraFlipClient implements ClientModInitializer {
                         if (findActiveElytraOrderSlot(s) != -1) { transitionHuman05s(BotState.ORDER_SELECT_ELYTRA, "§bĐã thấy Elytra!"); return true; }
                         if (clickSlotIfOpen(client, findSlotByName(client, "Search", slotSearchSignBtn), SlotActionType.PICKUP)) {
                             prepareSignSubmission("ely", BotState.ORDER_SELECT_ELYTRA);
-                        } else transitionRandom(BotState.ORDER_CLICK_SEARCH_SIGN, 3, 7, statusText);
+                        } else transitionRandom(BotState.ORDER_CLICK_SEARCH_SIGN, 2, 4, statusText);
                         return true;
                     }
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_CLICK_SEARCH_SIGN, 5, 10, "§bĐợi bảng Select Item...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_CLICK_SEARCH_SIGN, 3, 6, "§bĐợi bảng Select Item...");
                 else transitionHuman05s(BotState.ORDER_CLICK_ITEM_SLOT, "§cBấm lại Choose Item...");
                 return true;
             }
@@ -679,14 +696,14 @@ public class ElytraFlipClient implements ClientModInitializer {
                         if (elySlot != -1) {
                             if (clickSlotIfOpen(client, elySlot, SlotActionType.PICKUP)) {
                                 guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_ENCH_UNBREAKING, "§bMở bảng Pick Enchantments...");
-                            } else transitionRandom(BotState.ORDER_SELECT_ELYTRA, 3, 7, statusText);
+                            } else transitionRandom(BotState.ORDER_SELECT_ELYTRA, 2, 4, statusText);
                             return true;
                         }
                     } else if (title.contains("enchant")) {
                         guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_ENCH_UNBREAKING, "§bChọn Unbreaking III..."); return true;
                     }
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_SELECT_ELYTRA, 5, 10, "§bĐợi lọc ra Elytra...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_SELECT_ELYTRA, 3, 6, "§bĐợi lọc ra Elytra...");
                 else { guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_CLICK_SEARCH_SIGN, "§eGõ lại chữ ely..."); }
                 return true;
             }
@@ -696,11 +713,11 @@ public class ElytraFlipClient implements ClientModInitializer {
                     if (!s.getScreenHandler().getSlot(unbSlot).getStack().isEmpty()) {
                         if (clickSlotIfOpen(client, unbSlot, SlotActionType.PICKUP)) {
                             guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_ENCH_MENDING, "§bChọn Mending...");
-                        } else transitionRandom(BotState.ORDER_ENCH_UNBREAKING, 3, 7, statusText);
+                        } else transitionRandom(BotState.ORDER_ENCH_UNBREAKING, 2, 4, statusText);
                         return true;
                     }
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_ENCH_UNBREAKING, 5, 10, "§bĐợi bảng Pick Enchantments...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_ENCH_UNBREAKING, 3, 6, "§bĐợi bảng Pick Enchantments...");
                 else transitionHuman05s(BotState.ORDER_SELECT_ELYTRA, "§cChọn lại Elytra...");
                 return true;
             }
@@ -710,11 +727,11 @@ public class ElytraFlipClient implements ClientModInitializer {
                     if (!s.getScreenHandler().getSlot(mendSlot).getStack().isEmpty()) {
                         if (clickSlotIfOpen(client, mendSlot, SlotActionType.PICKUP)) {
                             guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_ENCH_CONFIRM, "§bLưu cả 2 Enchant...");
-                        } else transitionRandom(BotState.ORDER_ENCH_MENDING, 3, 7, statusText);
+                        } else transitionRandom(BotState.ORDER_ENCH_MENDING, 2, 4, statusText);
                         return true;
                     }
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_ENCH_MENDING, 5, 10, "§bĐợi chọn Mending...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_ENCH_MENDING, 3, 6, "§bĐợi chọn Mending...");
                 else transitionHuman05s(BotState.ORDER_ENCH_UNBREAKING, "§cThử lại Enchant...");
                 return true;
             }
@@ -722,7 +739,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                 if (client.currentScreen instanceof HandledScreen<?> s && s.getTitle().getString().toLowerCase().contains("enchant")) {
                     if (clickSlotIfOpen(client, slotConfirmEnchant, SlotActionType.PICKUP)) {
                         guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_VERIFY_ELYTRA_AND_CLICK_PRICE, "§bKiểm tra đủ 2 Enchant...");
-                    } else transitionRandom(BotState.ORDER_ENCH_CONFIRM, 3, 7, statusText);
+                    } else transitionRandom(BotState.ORDER_ENCH_CONFIRM, 2, 4, statusText);
                     return true;
                 }
                 guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_VERIFY_ELYTRA_AND_CLICK_PRICE, "§bKiểm tra đủ 2 Enchant..."); return true;
@@ -735,19 +752,19 @@ public class ElytraFlipClient implements ClientModInitializer {
                             if (clickSlotIfOpen(client, slotSetPriceBtn, SlotActionType.PICKUP)) {
                                 enchantRetryCount = 0;
                                 prepareSignSubmission(toCommandPrice(myOrderPrice), BotState.ORDER_CHECK_AMOUNT);
-                            } else transitionRandom(BotState.ORDER_VERIFY_ELYTRA_AND_CLICK_PRICE, 3, 7, statusText);
+                            } else transitionRandom(BotState.ORDER_VERIFY_ELYTRA_AND_CLICK_PRICE, 2, 4, statusText);
                             return true;
                         }
                         if (++enchantRetryCount <= 3) {
                             if (clickSlotIfOpen(client, slotChooseItemBtn, SlotActionType.PICKUP)) {
                                 guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_CLICK_SEARCH_SIGN, "§eChọn lại đủ 2 Enchant...");
-                            } else transitionRandom(BotState.ORDER_VERIFY_ELYTRA_AND_CLICK_PRICE, 3, 7, statusText);
+                            } else transitionRandom(BotState.ORDER_VERIFY_ELYTRA_AND_CLICK_PRICE, 2, 4, statusText);
                             return true;
                         }
                     }
                     guiWaitRetries = 0; transitionHuman05s(BotState.ORDER_CLICK_ITEM_SLOT, "§cBắt buộc chọn Elytra..."); return true;
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_VERIFY_ELYTRA_AND_CLICK_PRICE, 5, 10, "§bĐợi bảng New Order...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_VERIFY_ELYTRA_AND_CLICK_PRICE, 3, 6, "§bĐợi bảng New Order...");
                 else transitionHuman05s(BotState.ORDER_CLICK_ITEM_SLOT, "§cChọn lại Elytra...");
                 return true;
             }
@@ -757,11 +774,11 @@ public class ElytraFlipClient implements ClientModInitializer {
                     if (needsAmountInput(client)) {
                         if (clickSlotIfOpen(client, slotSetAmountBtn, SlotActionType.PICKUP)) {
                             prepareSignSubmission(String.valueOf(orderQuantity), BotState.ORDER_FINAL_CONFIRM);
-                        } else transitionRandom(BotState.ORDER_CHECK_AMOUNT, 3, 7, statusText);
+                        } else transitionRandom(BotState.ORDER_CHECK_AMOUNT, 2, 4, statusText);
                     } else transitionHuman05s(BotState.ORDER_FINAL_CONFIRM, "§bXác nhận tạo Order...");
                     return true;
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_CHECK_AMOUNT, 5, 10, "§bĐợi bảng New Order...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_CHECK_AMOUNT, 3, 6, "§bĐợi bảng New Order...");
                 else transitionHuman05s(BotState.ORDER_FINAL_CONFIRM, "§bXác nhận tạo Order...");
                 return true;
             }
@@ -772,12 +789,12 @@ public class ElytraFlipClient implements ClientModInitializer {
                     if (clickSlotIfOpen(client, findSlotByName(client, "Confirm", slotConfirmNewOrder), SlotActionType.PICKUP)) {
                         hasActiveOrder = true; chatOrderCompletedFlag = false; monitorTicksElapsed = 0; guiWaitRetries = 0;
                         currentRefreshTargetTicks = rollNextRefreshTargetTicks();
-                        transitionRandom(BotState.ORDER_POST_CONFIRM_CLOSE, 12, 22, "§eKiểm tra xác nhận Order...");
-                    } else transitionRandom(BotState.ORDER_FINAL_CONFIRM, 3, 7, statusText);
+                        transitionRandom(BotState.ORDER_POST_CONFIRM_CLOSE, 8, 14, "§eKiểm tra xác nhận Order...");
+                    } else transitionRandom(BotState.ORDER_FINAL_CONFIRM, 2, 4, statusText);
                     return true;
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(5)) transitionRandom(BotState.ORDER_FINAL_CONFIRM, 5, 10, "§bĐợi bấm Confirm...");
-                else transitionRandom(BotState.ORDER_POST_CONFIRM_CLOSE, 10, 18, "§eQua xem AH...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.ORDER_FINAL_CONFIRM, 3, 6, "§bĐợi bấm Confirm...");
+                else transitionRandom(BotState.ORDER_POST_CONFIRM_CLOSE, 8, 14, "§eQua xem AH...");
                 return true;
             }
             case ORDER_POST_CONFIRM_CLOSE -> {
@@ -785,12 +802,12 @@ public class ElytraFlipClient implements ClientModInitializer {
                     String title = s.getTitle().getString().toLowerCase();
                     if (title.contains("new order") || (title.contains("your orders") && findActiveElytraOrderSlot(s) == -1)) {
                         client.player.closeHandledScreen(); hasActiveOrder = false; lastFailedOrderPrice = myOrderPrice;
-                        transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 38, 60, "§cKhông đủ tiền! Canh Order..."); return true;
+                        transitionRandom(BotState.WAIT_ENOUGH_MONEY_OPEN, 18, 30, "§cKhông đủ tiền! Canh Order..."); return true;
                     }
-                    client.player.closeHandledScreen(); transitionRandom(BotState.ORDER_POST_CONFIRM_CLOSE, 12, 20, "§eĐợi đóng bảng Order..."); return true;
+                    client.player.closeHandledScreen(); transitionRandom(BotState.ORDER_POST_CONFIRM_CLOSE, 7, 12, "§eĐợi đóng bảng Order..."); return true;
                 }
                 humanizeCameraMovements(client);
-                guiWaitRetries = 0; lastReadSyncId = -1; transitionRandom(BotState.MONITOR_AH_OPEN, 55, 90, "§eMở bảng AH canh giá..."); return true;
+                guiWaitRetries = 0; lastReadSyncId = -1; transitionRandom(BotState.MONITOR_AH_OPEN, 18, 30, "§eMở bảng AH canh giá..."); return true;
             }
             default -> { return false; }
         }
@@ -803,24 +820,24 @@ public class ElytraFlipClient implements ClientModInitializer {
                     fillAndCloseSign(client, signScreen, pendingSignText);
                     guiWaitRetries = 0;
                     transitionHuman05s(nextStateAfterSign, statusText);
-                } else if (++guiWaitRetries < 20) {
-                    transitionRandom(BotState.SUBMIT_SIGN_GUI, 5, 10, statusText);
+                } else if (++guiWaitRetries < 18) {
+                    transitionRandom(BotState.SUBMIT_SIGN_GUI, 3, 6, statusText);
                 } else {
                     transitionHuman05s(nextStateAfterSign, statusText);
                 }
             }
             case BOUNTY_SEND_CMD -> {
                 if (pendingBountyCmd.isEmpty()) {
-                    transitionRandom(stateAfterBounty, 18, 30, "§aTiếp tục chu kỳ...");
+                    transitionRandom(stateAfterBounty, 10, 16, "§aTiếp tục chu kỳ...");
                     return;
                 }
                 if (client.currentScreen != null) {
                     client.player.closeHandledScreen();
-                    transitionRandom(BotState.BOUNTY_SEND_CMD, 20, 34, "§eĐóng bảng cũ để /bounty...");
+                    transitionRandom(BotState.BOUNTY_SEND_CMD, 10, 16, "§eĐóng bảng cũ để /bounty...");
                     return;
                 }
                 if (!sendCommandSafe(client, pendingBountyCmd)) {
-                    transitionRandom(BotState.BOUNTY_SEND_CMD, 12, 22, "§eĐợi nhịp gửi /bounty...");
+                    transitionRandom(BotState.BOUNTY_SEND_CMD, 6, 12, "§eĐợi nhịp gửi /bounty...");
                     return;
                 }
                 guiWaitRetries = 0;
@@ -837,63 +854,63 @@ public class ElytraFlipClient implements ClientModInitializer {
                                 pendingBountyCmd = "";
                                 client.player.closeHandledScreen();
                                 humanizeCameraMovements(client);
-                                transitionRandom(stateAfterBounty, 45, 75, "§aĐã Confirm Bounty! Nghỉ nhịp...");
+                                transitionRandom(stateAfterBounty, 18, 28, "§aĐã Confirm Bounty! Tiếp tục...");
                             } else {
-                                transitionRandom(BotState.BOUNTY_CLICK_GREEN_CONFIRM, 4, 9, statusText);
+                                transitionRandom(BotState.BOUNTY_CLICK_GREEN_CONFIRM, 2, 5, statusText);
                             }
                             return;
                         }
                     }
                 }
-                if (++guiWaitRetries < 22) {
-                    transitionRandom(BotState.BOUNTY_CLICK_GREEN_CONFIRM, 6, 11, "§aĐợi nút Xanh Confirm Bounty...");
+                if (++guiWaitRetries < 20) {
+                    transitionRandom(BotState.BOUNTY_CLICK_GREEN_CONFIRM, 4, 7, "§aĐợi nút Xanh Confirm Bounty...");
                 } else {
                     pendingBountyCmd = "";
                     if (client.currentScreen != null) client.player.closeHandledScreen();
-                    transitionRandom(stateAfterBounty, 45, 75, "§eThoát bảng Bounty -> Tiếp tục...");
+                    transitionRandom(stateAfterBounty, 18, 28, "§eThoát bảng Bounty -> Tiếp tục...");
                 }
             }
             case MONITOR_WAIT -> {
                 if (monitorTicksElapsed >= currentRefreshTargetTicks) {
-                    transitionRandom(BotState.CANCEL_ORDER_OPEN, 40, 65, "§6Đủ TG ngẫu nhiên! Đi hủy Order...");
+                    transitionRandom(BotState.CANCEL_ORDER_OPEN, 18, 28, "§6Đủ TG ngẫu nhiên! Đi hủy Order...");
                     return;
                 }
-                transitionRandom(BotState.MONITOR_AH_OPEN, 55, 90, "§eMở bảng AH canh giá...");
+                transitionRandom(BotState.MONITOR_AH_OPEN, 18, 30, "§eMở bảng AH canh giá...");
             }
             case MONITOR_AH_OPEN -> {
                 if (monitorTicksElapsed >= currentRefreshTargetTicks) {
-                    transitionRandom(BotState.CANCEL_ORDER_OPEN, 40, 65, "§6Đủ TG ngẫu nhiên! Đi hủy Order...");
+                    transitionRandom(BotState.CANCEL_ORDER_OPEN, 18, 28, "§6Đủ TG ngẫu nhiên! Đi hủy Order...");
                     return;
                 }
                 if (client.currentScreen != null) {
                     client.player.closeHandledScreen();
                     humanizeCameraMovements(client);
-                    transitionRandom(BotState.MONITOR_AH_OPEN, 55, 90, "§eNghỉ 3s-4.5s trước khi mở lại AH...");
+                    transitionRandom(BotState.MONITOR_AH_OPEN, 20, 32, "§eNghỉ nhịp trước khi mở lại AH...");
                     return;
                 }
                 if (!sendCommandSafe(client, ahSearchCmd)) {
-                    transitionRandom(BotState.MONITOR_AH_OPEN, 14, 26, "§eĐợi delay /ah an toàn...");
+                    transitionRandom(BotState.MONITOR_AH_OPEN, 6, 12, "§eĐợi nhịp /ah an toàn...");
                     return;
                 }
                 lowestAhPrice = -1; resetAhPagination(); guiWaitRetries = 0; ahWatchLoops = 0;
-                transitionRandom(BotState.MONITOR_AH_READ, 16, 26, "§aĐang mở /" + ahSearchCmd + " canh giá...");
+                transitionRandom(BotState.MONITOR_AH_READ, 8, 14, "§aĐang mở /" + ahSearchCmd + " canh giá...");
             }
             case MONITOR_AH_READ -> {
                 if (monitorTicksElapsed >= currentRefreshTargetTicks) {
                     if (client.currentScreen != null) client.player.closeHandledScreen();
-                    transitionRandom(BotState.CANCEL_ORDER_OPEN, 40, 65, "§6Đủ TG ngẫu nhiên! Đi hủy Order...");
+                    transitionRandom(BotState.CANCEL_ORDER_OPEN, 18, 28, "§6Đủ TG ngẫu nhiên! Đi hủy Order...");
                     return;
                 }
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     String title = s.getTitle().getString().toLowerCase();
                     if (title.contains("order")) {
                         client.player.closeHandledScreen();
-                        transitionRandom(BotState.MONITOR_AH_OPEN, 55, 85, "§eĐóng Order -> Mở AH...");
+                        transitionRandom(BotState.MONITOR_AH_OPEN, 20, 32, "§eĐóng Order -> Mở AH...");
                         return;
                     }
                     if (isGuiFullySettled(client, s)) {
-                        if (clickedNextPage && title.contains("page 1") && ++guiWaitRetries < 14 + random.nextInt(5)) {
-                            transitionRandom(BotState.MONITOR_AH_READ, 6, 11, "§eĐợi sang Trang 2...");
+                        if (clickedNextPage && title.contains("page 1") && ++guiWaitRetries < 13 + random.nextInt(4)) {
+                            transitionRandom(BotState.MONITOR_AH_READ, 4, 7, "§eĐợi sang Trang 2...");
                             return;
                         }
                         guiWaitRetries = 0;
@@ -902,7 +919,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                         if (title.contains("page 1")) {
                             if (lowEq >= 3) {
                                 client.player.closeHandledScreen();
-                                transitionRandom(BotState.CANCEL_ORDER_OPEN, 38, 60, "§cCó >=3 Elytra <= Order! Hủy...");
+                                transitionRandom(BotState.CANCEL_ORDER_OPEN, 18, 28, "§cCó >=3 Elytra <= Order! Hủy...");
                                 return;
                             }
                             if (enableAhPage2 && !clickedNextPage && validOnPage < minElytraPerPage && hasNextPageButton(s)) {
@@ -911,7 +928,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                                     page1CountAtOrBelow = lowEq; page1LowestAh = pageLow; clickedNextPage = true; lastPriceSnapshotHash = -1; guiSettleTicks = 0;
                                     transitionHuman05s(BotState.MONITOR_AH_READ, "§eTrang 1 ít Ely -> Xem Trang 2...");
                                 } else {
-                                    transitionRandom(BotState.MONITOR_AH_READ, 4, 8, statusText);
+                                    transitionRandom(BotState.MONITOR_AH_READ, 2, 5, statusText);
                                 }
                                 return;
                             }
@@ -919,45 +936,45 @@ public class ElytraFlipClient implements ClientModInitializer {
                             lowEq += page1CountAtOrBelow;
                             if (lowEq >= 3) {
                                 client.player.closeHandledScreen();
-                                transitionRandom(BotState.CANCEL_ORDER_OPEN, 38, 60, "§cCó >=3 Elytra <= Order! Hủy...");
+                                transitionRandom(BotState.CANCEL_ORDER_OPEN, 18, 28, "§cCó >=3 Elytra <= Order! Hủy...");
                                 return;
                             }
                         }
                         statusText = "§aCanh AH (<=" + formatMoney(myOrderPrice) + ": " + lowEq + "/3) " + (monitorTicksElapsed / 20) + "/" + (currentRefreshTargetTicks / 20) + "s";
                         if (++ahWatchLoops < currentAhWatchMaxLoops) {
-                            transitionRandom(BotState.MONITOR_AH_READ, 12, 20, statusText);
+                            transitionRandom(BotState.MONITOR_AH_READ, 8, 14, statusText);
                         } else {
                             ahWatchLoops = 0; client.player.closeHandledScreen();
                             humanizeCameraMovements(client);
-                            transitionRandom(BotState.MONITOR_AH_OPEN, 65, 110, statusText);
+                            transitionRandom(BotState.MONITOR_AH_OPEN, 26, 42, statusText);
                         }
                         return;
                     }
                 } else {
-                    transitionRandom(BotState.MONITOR_AH_OPEN, 55, 90, "§eMở lại bảng AH...");
+                    transitionRandom(BotState.MONITOR_AH_OPEN, 22, 34, "§eMở lại bảng AH...");
                     return;
                 }
-                if (++guiWaitRetries < 20 + random.nextInt(5)) {
-                    transitionRandom(BotState.MONITOR_AH_READ, 6, 11, "§eĐợi tải bảng AH...");
+                if (++guiWaitRetries < 18 + random.nextInt(5)) {
+                    transitionRandom(BotState.MONITOR_AH_READ, 4, 7, "§eĐợi tải bảng AH...");
                 } else {
                     guiWaitRetries = 0; if (client.currentScreen != null) client.player.closeHandledScreen();
-                    transitionRandom(BotState.MONITOR_AH_OPEN, 65, 105, "§eLàm mới /" + ahSearchCmd + "...");
+                    transitionRandom(BotState.MONITOR_AH_OPEN, 26, 42, "§eLàm mới /" + ahSearchCmd + "...");
                 }
             }
             case CLAIM_OPEN_ORDER -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.CLAIM_OPEN_ORDER, 36, 55, "§aĐóng bảng cũ..."); return; }
-                if (!sendCommandSafe(client, "order")) { transitionRandom(BotState.CLAIM_OPEN_ORDER, 12, 20, "§aĐợi nhịp lệnh..."); return; }
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.CLAIM_OPEN_ORDER, 16, 26, "§aĐóng bảng cũ..."); return; }
+                if (!sendCommandSafe(client, "order")) { transitionRandom(BotState.CLAIM_OPEN_ORDER, 6, 11, "§aĐợi nhịp lệnh..."); return; }
                 guiWaitRetries = 0; transitionHuman05s(BotState.CLAIM_CLICK_YOUR_ORDERS, "§aBấm Your Orders...");
             }
             case CLAIM_CLICK_YOUR_ORDERS -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && !s.getTitle().getString().toLowerCase().contains("your orders")) {
                     if (clickSlotIfOpen(client, findSlotByName(client, "Your Orders", slotYourOrdersBtn), SlotActionType.PICKUP)) {
                         guiWaitRetries = 0; transitionHuman05s(BotState.CLAIM_CLICK_COMPLETED_ELYTRA, "§aChọn đơn Elytra...");
-                    } else transitionRandom(BotState.CLAIM_CLICK_YOUR_ORDERS, 4, 8, statusText);
+                    } else transitionRandom(BotState.CLAIM_CLICK_YOUR_ORDERS, 2, 4, statusText);
                     return;
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(4)) transitionRandom(BotState.CLAIM_CLICK_YOUR_ORDERS, 6, 11, "§aĐợi bảng Orders...");
-                else transitionRandom(BotState.CLAIM_OPEN_ORDER, 38, 60, "§aMở lại /order...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.CLAIM_CLICK_YOUR_ORDERS, 3, 6, "§aĐợi bảng Orders...");
+                else transitionRandom(BotState.CLAIM_OPEN_ORDER, 18, 28, "§aMở lại /order...");
             }
             case CLAIM_CLICK_COMPLETED_ELYTRA -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && s.getTitle().getString().toLowerCase().contains("your orders")) {
@@ -965,56 +982,56 @@ public class ElytraFlipClient implements ClientModInitializer {
                     if (slot != -1) {
                         double p = extractUnitPrice(client, s.getScreenHandler().getSlot(slot).getStack()); if (p > 0) myOrderPrice = p;
                         if (clickSlotIfOpen(client, slot, SlotActionType.PICKUP)) { guiWaitRetries = 0; transitionHuman05s(BotState.CLAIM_CLICK_COLLECT_BOX, "§aBấm Collect..."); }
-                        else transitionRandom(BotState.CLAIM_CLICK_COMPLETED_ELYTRA, 4, 8, statusText);
+                        else transitionRandom(BotState.CLAIM_CLICK_COMPLETED_ELYTRA, 2, 4, statusText);
                         return;
                     }
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(4)) transitionRandom(BotState.CLAIM_CLICK_COMPLETED_ELYTRA, 6, 11, "§aĐợi Your Orders...");
-                else transitionRandom(BotState.CLAIM_OPEN_ORDER, 38, 60, "§aThử lại /order...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.CLAIM_CLICK_COMPLETED_ELYTRA, 3, 6, "§aĐợi Your Orders...");
+                else transitionRandom(BotState.CLAIM_OPEN_ORDER, 18, 28, "§aThử lại /order...");
             }
             case CLAIM_CLICK_COLLECT_BOX -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && s.getTitle().getString().toLowerCase().contains("edit order")) {
                     if (clickSlotIfOpen(client, findSlotByName(client, "Collect", slotEditOrderCollectBox), SlotActionType.PICKUP)) {
                         guiWaitRetries = 0; transitionHuman05s(BotState.CLAIM_TAKE_ELYTRA_TO_HOTBAR, "§aLấy Elytra...");
-                    } else transitionRandom(BotState.CLAIM_CLICK_COLLECT_BOX, 4, 8, statusText);
+                    } else transitionRandom(BotState.CLAIM_CLICK_COLLECT_BOX, 2, 4, statusText);
                     return;
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(4)) transitionRandom(BotState.CLAIM_CLICK_COLLECT_BOX, 6, 11, "§aĐợi Edit Order...");
-                else transitionRandom(BotState.CLAIM_OPEN_ORDER, 38, 60, "§aMở lại /order...");
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.CLAIM_CLICK_COLLECT_BOX, 3, 6, "§aĐợi Edit Order...");
+                else transitionRandom(BotState.CLAIM_OPEN_ORDER, 18, 28, "§aMở lại /order...");
             }
             case CLAIM_TAKE_ELYTRA_TO_HOTBAR -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && s.getTitle().getString().toLowerCase().contains("collect")) {
                     int slot = findActiveElytraOrderSlot(s);
                     if (slot != -1) {
-                        if (clickSlotIfOpen(client, slot, SlotActionType.PICKUP)) { hasActiveOrder = false; guiWaitRetries = 0; transitionRandom(BotState.CLAIM_CLOSE_AND_WAIT_INV, 12, 20, "§aĐóng bảng Order..."); }
-                        else transitionRandom(BotState.CLAIM_TAKE_ELYTRA_TO_HOTBAR, 4, 8, statusText);
+                        if (clickSlotIfOpen(client, slot, SlotActionType.PICKUP)) { hasActiveOrder = false; guiWaitRetries = 0; transitionRandom(BotState.CLAIM_CLOSE_AND_WAIT_INV, 6, 11, "§aĐóng bảng Order..."); }
+                        else transitionRandom(BotState.CLAIM_TAKE_ELYTRA_TO_HOTBAR, 2, 4, statusText);
                         return;
                     }
                 }
-                if (++guiWaitRetries < 15 + random.nextInt(4)) transitionRandom(BotState.CLAIM_TAKE_ELYTRA_TO_HOTBAR, 6, 11, "§aĐợi Collect Items...");
-                else { guiWaitRetries = 0; transitionRandom(BotState.CLAIM_CLOSE_AND_WAIT_INV, 12, 20, "§aKiểm tra túi đồ..."); }
+                if (++guiWaitRetries < 14 + random.nextInt(4)) transitionRandom(BotState.CLAIM_TAKE_ELYTRA_TO_HOTBAR, 3, 6, "§aĐợi Collect Items...");
+                else { guiWaitRetries = 0; transitionRandom(BotState.CLAIM_CLOSE_AND_WAIT_INV, 6, 11, "§aKiểm tra túi đồ..."); }
             }
             case CLAIM_CLOSE_AND_WAIT_INV -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.CLAIM_CLOSE_AND_WAIT_INV, 12, 20, "§aThoát bảng..."); return; }
-                if (findElytraInInventory(client) != -1) { hasActiveOrder = false; transitionRandom(BotState.SELL_SCAN_AH_OPEN, 45, 75, "§dQuét giá AH để bán..."); return; }
-                if (++guiWaitRetries < 14 + random.nextInt(4)) transitionRandom(BotState.CLAIM_CLOSE_AND_WAIT_INV, 6, 11, "§aĐợi đồng bộ...");
-                else transitionRandom(BotState.MONITOR_AH_OPEN, 55, 85, "§aTiếp tục canh đơn...");
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.CLAIM_CLOSE_AND_WAIT_INV, 6, 11, "§aThoát bảng..."); return; }
+                if (findElytraInInventory(client) != -1) { hasActiveOrder = false; transitionRandom(BotState.SELL_SCAN_AH_OPEN, 18, 28, "§dQuét giá AH để bán..."); return; }
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.CLAIM_CLOSE_AND_WAIT_INV, 3, 6, "§aĐợi đồng bộ...");
+                else transitionRandom(BotState.MONITOR_AH_OPEN, 20, 32, "§aTiếp tục canh đơn...");
             }
 // === HẾT PHẦN 5 ===
-                    case CANCEL_ORDER_OPEN -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.CANCEL_ORDER_OPEN, 36, 55, "§cĐóng bảng cũ..."); return; }
-                if (!sendCommandSafe(client, "order")) { transitionRandom(BotState.CANCEL_ORDER_OPEN, 12, 20, "§cĐợi nhịp lệnh..."); return; }
+               case CANCEL_ORDER_OPEN -> {
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.CANCEL_ORDER_OPEN, 16, 26, "§cĐóng bảng cũ..."); return; }
+                if (!sendCommandSafe(client, "order")) { transitionRandom(BotState.CANCEL_ORDER_OPEN, 6, 11, "§cĐợi nhịp lệnh..."); return; }
                 guiWaitRetries = 0; transitionHuman05s(BotState.CANCEL_ORDER_CLICK_YOURS, "§cBấm Your Orders...");
             }
             case CANCEL_ORDER_CLICK_YOURS -> {
                 if (client.currentScreen instanceof HandledScreen<?>) {
                     if (clickSlotIfOpen(client, findSlotByName(client, "Your Orders", slotYourOrdersBtn), SlotActionType.PICKUP)) {
                         guiWaitRetries = 0; transitionHuman05s(BotState.CANCEL_ORDER_CLICK_ELYTRA, "§cChọn Elytra cần hủy...");
-                    } else transitionRandom(BotState.CANCEL_ORDER_CLICK_YOURS, 4, 8, statusText);
+                    } else transitionRandom(BotState.CANCEL_ORDER_CLICK_YOURS, 2, 4, statusText);
                     return;
                 }
-                if (++guiWaitRetries < 12 + random.nextInt(4)) transitionRandom(BotState.CANCEL_ORDER_CLICK_YOURS, 6, 11, statusText);
-                else transitionRandom(BotState.CANCEL_ORDER_OPEN, 38, 60, statusText);
+                if (++guiWaitRetries < 12 + random.nextInt(4)) transitionRandom(BotState.CANCEL_ORDER_CLICK_YOURS, 3, 6, statusText);
+                else transitionRandom(BotState.CANCEL_ORDER_OPEN, 18, 28, statusText);
             }
             case CANCEL_ORDER_CLICK_ELYTRA -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && s.getTitle().getString().toLowerCase().contains("your orders")) {
@@ -1022,58 +1039,58 @@ public class ElytraFlipClient implements ClientModInitializer {
                     if (mySlot != -1) {
                         if (isOrderDeliveredInList(client, s.getScreenHandler().getSlot(mySlot).getStack())) {
                             if (clickSlotIfOpen(client, mySlot, SlotActionType.PICKUP)) { guiWaitRetries = 0; transitionHuman05s(BotState.CLAIM_CLICK_COLLECT_BOX, "§aĐơn đã xong! Lấy Elytra..."); }
-                            else transitionRandom(BotState.CANCEL_ORDER_CLICK_ELYTRA, 4, 8, statusText);
+                            else transitionRandom(BotState.CANCEL_ORDER_CLICK_ELYTRA, 2, 4, statusText);
                             return;
                         }
                         if (clickSlotIfOpen(client, mySlot, SlotActionType.PICKUP)) {
                             guiWaitRetries = 0; transitionHuman05s(BotState.CANCEL_ORDER_CLICK_RED_CANCEL, "§cBấm Cancel (Ô 14)...");
-                        } else transitionRandom(BotState.CANCEL_ORDER_CLICK_ELYTRA, 4, 8, statusText);
+                        } else transitionRandom(BotState.CANCEL_ORDER_CLICK_ELYTRA, 2, 4, statusText);
                         return;
                     } else if (++guiWaitRetries >= 4) {
-                        restartCycleSafeHuman(client, "§aĐã hủy xong! Nghỉ nhịp rồi quét...");
+                        restartCycleSafeHuman(client, "§aĐã hủy xong! Quét lại...");
                         return;
                     }
                 }
-                if (++guiWaitRetries < 11 + random.nextInt(4)) transitionRandom(BotState.CANCEL_ORDER_CLICK_ELYTRA, 6, 11, statusText);
-                else restartCycleSafeHuman(client, "§aQuét giá lại an toàn...");
+                if (++guiWaitRetries < 10 + random.nextInt(4)) transitionRandom(BotState.CANCEL_ORDER_CLICK_ELYTRA, 3, 6, statusText);
+                else restartCycleSafeHuman(client, "§aQuét giá lại...");
             }
             case CANCEL_ORDER_CLICK_RED_CANCEL -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && s.getTitle().getString().toLowerCase().contains("edit order")) {
                     if (clickSlotIfOpen(client, findSlotByName(client, "Cancel", slotEditOrderCancelBtn), SlotActionType.PICKUP)) {
                         guiWaitRetries = 0; transitionHuman05s(BotState.CANCEL_ORDER_CLICK_GREEN_CONFIRM, "§cBấm Confirm hủy (Ô 16)...");
-                    } else transitionRandom(BotState.CANCEL_ORDER_CLICK_RED_CANCEL, 4, 8, statusText);
+                    } else transitionRandom(BotState.CANCEL_ORDER_CLICK_RED_CANCEL, 2, 4, statusText);
                     return;
                 }
-                if (++guiWaitRetries < 11 + random.nextInt(4)) transitionRandom(BotState.CANCEL_ORDER_CLICK_RED_CANCEL, 6, 11, statusText);
-                else restartCycleSafeHuman(client, "§aQuét giá lại an toàn...");
+                if (++guiWaitRetries < 10 + random.nextInt(4)) transitionRandom(BotState.CANCEL_ORDER_CLICK_RED_CANCEL, 3, 6, statusText);
+                else restartCycleSafeHuman(client, "§aQuét giá lại...");
             }
             case CANCEL_ORDER_CLICK_GREEN_CONFIRM -> {
-                if (client.currentScreen == null) { restartCycleSafeHuman(client, "§aĐã hủy Order! Nghỉ nhịp an toàn..."); return; }
+                if (client.currentScreen == null) { restartCycleSafeHuman(client, "§aĐã hủy Order! Quét lại..."); return; }
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     String title = s.getTitle().getString().toLowerCase();
                     if (title.contains("cancel") || title.contains("confirm")) {
                         if (clickSlotIfOpen(client, findSlotByName(client, "Confirm", slotCancelOrderConfirmBtn), SlotActionType.PICKUP)) {
-                            restartCycleSafeHuman(client, "§aĐã hủy Order! Nghỉ nhịp an toàn...");
-                        } else transitionRandom(BotState.CANCEL_ORDER_CLICK_GREEN_CONFIRM, 4, 8, statusText);
+                            restartCycleSafeHuman(client, "§aĐã hủy Order! Quét lại...");
+                        } else transitionRandom(BotState.CANCEL_ORDER_CLICK_GREEN_CONFIRM, 2, 4, statusText);
                         return;
                     }
                     if (title.contains("your orders") && findActiveElytraOrderSlot(s) == -1) {
-                        restartCycleSafeHuman(client, "§aĐã hủy Order! Nghỉ nhịp an toàn..."); return;
+                        restartCycleSafeHuman(client, "§aĐã hủy Order! Quét lại..."); return;
                     }
                 }
-                if (++guiWaitRetries < 8 + random.nextInt(3)) transitionRandom(BotState.CANCEL_ORDER_CLICK_GREEN_CONFIRM, 6, 11, statusText);
-                else restartCycleSafeHuman(client, "§aĐã hủy Order! Nghỉ nhịp an toàn...");
+                if (++guiWaitRetries < 8 + random.nextInt(3)) transitionRandom(BotState.CANCEL_ORDER_CLICK_GREEN_CONFIRM, 3, 6, statusText);
+                else restartCycleSafeHuman(client, "§aĐã hủy Order! Quét lại...");
             }
             case SELL_SCAN_AH_OPEN -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.SELL_SCAN_AH_OPEN, 38, 60, "§dĐóng bảng cũ..."); return; }
-                if (!sendCommandSafe(client, ahSearchCmd)) { transitionRandom(BotState.SELL_SCAN_AH_OPEN, 14, 24, "§dĐợi delay /ah..."); return; }
-                resetAhPagination(); guiWaitRetries = 0; transitionRandom(BotState.SELL_SCAN_AH_READ, 16, 26, "§dQuét /" + ahSearchCmd + " để bán...");
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.SELL_SCAN_AH_OPEN, 16, 26, "§dĐóng bảng cũ..."); return; }
+                if (!sendCommandSafe(client, ahSearchCmd)) { transitionRandom(BotState.SELL_SCAN_AH_OPEN, 6, 12, "§dĐợi nhịp /ah..."); return; }
+                resetAhPagination(); guiWaitRetries = 0; transitionRandom(BotState.SELL_SCAN_AH_READ, 8, 14, "§dQuét /" + ahSearchCmd + " để bán...");
             }
             case SELL_SCAN_AH_READ -> {
                 if (client.currentScreen instanceof HandledScreen<?> s) {
                     String title = s.getTitle().getString().toLowerCase();
                     if (!title.contains("order") && isGuiFullySettled(client, s)) {
-                        if (clickedNextPage && title.contains("page 1") && ++guiWaitRetries < 14 + random.nextInt(4)) { transitionRandom(BotState.SELL_SCAN_AH_READ, 6, 11, "§dĐợi sang Trang 2..."); return; }
+                        if (clickedNextPage && title.contains("page 1") && ++guiWaitRetries < 13 + random.nextInt(4)) { transitionRandom(BotState.SELL_SCAN_AH_READ, 3, 6, "§dĐợi sang Trang 2..."); return; }
                         int validCount = countValidAhElytras(client, s);
                         if (enableAhPage2 && !clickedNextPage && title.contains("page 1") && validCount < minElytraPerPage && hasNextPageButton(s)) {
                             int nextSlot = findSlotByName(client, "Next page", slotAhNextPageBtn);
@@ -1081,21 +1098,21 @@ public class ElytraFlipClient implements ClientModInitializer {
                                 page1LowestAh = scanAhLowestPrice(client, s); page1CompetitorsBelowTarget = countCompetitorsBelowTarget(client, s, myOrderPrice);
                                 clickedNextPage = true; guiWaitRetries = 0; lastPriceSnapshotHash = -1; guiSettleTicks = 0;
                                 transitionHuman05s(BotState.SELL_SCAN_AH_READ, "§dTrang 1 ít Ely -> Xem Trang 2...");
-                            } else transitionRandom(BotState.SELL_SCAN_AH_READ, 4, 8, statusText);
+                            } else transitionRandom(BotState.SELL_SCAN_AH_READ, 2, 4, statusText);
                             return;
                         }
                         finalAhSellPrice = determineSmartSellPriceMultiPage(client, s, myOrderPrice);
                         client.player.closeHandledScreen();
                         humanizeCameraMovements(client);
-                        transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 18, 30, "§dCầm Elytra..."); return;
+                        transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 8, 14, "§dCầm Elytra..."); return;
                     }
                 }
-                if (++guiWaitRetries < 21 + random.nextInt(5)) transitionRandom(BotState.SELL_SCAN_AH_READ, 6, 11, "§dĐang tải giá AH...");
-                else { if (client.currentScreen != null) client.player.closeHandledScreen(); finalAhSellPrice = calculateCustomSellPrice(myOrderPrice, Math.max(0, minProfit - ahPriceDropTotal)); transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 18, 30, "§dCầm Elytra..."); }
+                if (++guiWaitRetries < 20 + random.nextInt(5)) transitionRandom(BotState.SELL_SCAN_AH_READ, 3, 6, "§dĐang tải giá AH...");
+                else { if (client.currentScreen != null) client.player.closeHandledScreen(); finalAhSellPrice = calculateCustomSellPrice(myOrderPrice, Math.max(0, minProfit - ahPriceDropTotal)); transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 8, 14, "§dCầm Elytra..."); }
                 return;
             }
             case SELL_SELECT_HOTBAR_SLOT -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 12, 20, "§dĐóng bảng..."); return; }
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 6, 11, "§dĐóng bảng..."); return; }
                 int invSlot = findElytraInInventory(client);
                 if (invSlot == -1) { if (hasActiveAhListing) state = BotState.AH_MONITOR_WAIT; else restartCycleSafeHuman(client, "§eKhông thấy Elytra, làm lại..."); return; }
                 if (invSlot >= 0 && invSlot <= 8) {
@@ -1107,13 +1124,13 @@ public class ElytraFlipClient implements ClientModInitializer {
                     client.player.getInventory().selectedSlot = hotbar;
                     if (client.getNetworkHandler() != null) client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(hotbar));
                 }
-                transitionRandom(BotState.SELL_SEND_AH_CMD, 18, 30, "§a/ah sell " + formatMoney(finalAhSellPrice));
+                transitionRandom(BotState.SELL_SEND_AH_CMD, 8, 14, "§a/ah sell " + formatMoney(finalAhSellPrice));
             }
             case SELL_SEND_AH_CMD -> {
                 if (isStandaloneElytra(client.player.getMainHandStack())) {
-                    if (!sendCommandSafe(client, "ah sell " + toCommandPrice(finalAhSellPrice))) { transitionRandom(BotState.SELL_SEND_AH_CMD, 12, 22, statusText); return; }
+                    if (!sendCommandSafe(client, "ah sell " + toCommandPrice(finalAhSellPrice))) { transitionRandom(BotState.SELL_SEND_AH_CMD, 6, 12, statusText); return; }
                     guiWaitRetries = 0; transitionHuman05s(BotState.SELL_CONFIRM_AH_GUI, "§aĐợi Confirm AH...");
-                } else transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 12, 20, statusText);
+                } else transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 6, 11, statusText);
             }
             case SELL_CONFIRM_AH_GUI -> {
                 if (client.currentScreen instanceof HandledScreen<?>) {
@@ -1126,18 +1143,18 @@ public class ElytraFlipClient implements ClientModInitializer {
                         nextCheckTickTarget = rollNextYourItemsCheckDeltaTicks();
                         humanizeCameraMovements(client);
                         logChat(client, "§dĐã treo AH giá §a" + formatMoney(myListedAhPrice) + "§d! Đang chờ người mua...");
-                        transitionRandom(BotState.AH_MONITOR_WAIT, 24, 40, "§dChờ mua AH: " + formatMoney(myListedAhPrice));
-                    } else transitionRandom(BotState.SELL_CONFIRM_AH_GUI, 4, 8, statusText);
+                        transitionRandom(BotState.AH_MONITOR_WAIT, 14, 22, "§dChờ mua AH: " + formatMoney(myListedAhPrice));
+                    } else transitionRandom(BotState.SELL_CONFIRM_AH_GUI, 2, 4, statusText);
                     return;
                 }
-                if (++guiWaitRetries < 18 + random.nextInt(5)) transitionRandom(BotState.SELL_CONFIRM_AH_GUI, 6, 11, "§aĐợi Confirm AH...");
-                else transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 18, 30, "§eThử lại /ah sell...");
+                if (++guiWaitRetries < 18 + random.nextInt(5)) transitionRandom(BotState.SELL_CONFIRM_AH_GUI, 3, 6, "§aĐợi Confirm AH...");
+                else transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 8, 14, "§eThử lại /ah sell...");
             }
             case AH_MONITOR_WAIT -> {
                 monitorTicksElapsed++;
                 if (!pendingBountyCmd.isEmpty() && cmdCooldownTicks == 0) {
                     stateAfterBounty = BotState.AH_MONITOR_WAIT;
-                    transitionRandom(BotState.BOUNTY_SEND_CMD, 14, 24, "§aChuyển lời qua /bounty add...");
+                    transitionRandom(BotState.BOUNTY_SEND_CMD, 8, 14, "§aChuyển lời qua /bounty add...");
                     return;
                 }
                 if (ahListingStartMs == 0) ahListingStartMs = System.currentTimeMillis();
@@ -1152,16 +1169,16 @@ public class ElytraFlipClient implements ClientModInitializer {
                     currentDiscountWaitTargetSec = rollNextDiscountWaitSec();
                     if (canDrop1M) {
                         ahPriceDropTotal += 1_000_000; pendingRelistPrice = Math.max(breakEvenPrice, myListedAhPrice - 1_000_000); forceDiscountRelist = true;
-                        transitionRandom(BotState.AH_CHECK_OPEN, 45, 75, "§6Hạ 1M -> " + formatMoney(pendingRelistPrice)); return;
+                        transitionRandom(BotState.AH_CHECK_OPEN, 18, 28, "§6Hạ 1M -> " + formatMoney(pendingRelistPrice)); return;
                     }
                 }
-                if (monitorTicksElapsed >= currentRefreshTargetTicks) { forceAhRefresh60s = true; transitionRandom(BotState.AH_CHECK_OPEN, 45, 75, "§6Đủ TG ngẫu nhiên! Xem giá & bán lại..."); return; }
-                if (monitorTicksElapsed >= nextCheckTickTarget) { nextCheckTickTarget += rollNextYourItemsCheckDeltaTicks(); forceAhRefresh60s = false; transitionRandom(BotState.AH_CHECK_OPEN, 45, 75, "§dKiểm tra Your Items..."); }
+                if (monitorTicksElapsed >= currentRefreshTargetTicks) { forceAhRefresh60s = true; transitionRandom(BotState.AH_CHECK_OPEN, 18, 28, "§6Đủ TG ngẫu nhiên! Xem giá & bán lại..."); return; }
+                if (monitorTicksElapsed >= nextCheckTickTarget) { nextCheckTickTarget += rollNextYourItemsCheckDeltaTicks(); forceAhRefresh60s = false; transitionRandom(BotState.AH_CHECK_OPEN, 18, 28, "§dKiểm tra Your Items..."); }
             }
             case AH_CHECK_OPEN -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.AH_CHECK_OPEN, 40, 65, statusText); return; }
-                if (!sendCommandSafe(client, ahSearchCmd)) { transitionRandom(BotState.AH_CHECK_OPEN, 14, 24, statusText); return; }
-                resetAhPagination(); guiWaitRetries = 0; transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 16, 26, "§dXem giá /" + ahSearchCmd + "...");
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.AH_CHECK_OPEN, 18, 28, statusText); return; }
+                if (!sendCommandSafe(client, ahSearchCmd)) { transitionRandom(BotState.AH_CHECK_OPEN, 6, 12, statusText); return; }
+                resetAhPagination(); guiWaitRetries = 0; transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 8, 14, "§dXem giá /" + ahSearchCmd + "...");
             }
             case AH_CHECK_READ_AND_CLICK_YOUR_ITEMS -> {
                 if (client.currentScreen instanceof HandledScreen<?> s && !s.getTitle().getString().toLowerCase().contains("your items")) {
@@ -1171,10 +1188,10 @@ public class ElytraFlipClient implements ClientModInitializer {
                             if (clickSlotIfOpen(client, findSlotByName(client, "Your Items", slotAhYourItemsBtn), SlotActionType.PICKUP)) {
                                 forceDiscountRelist = false; needAhRelist = true; guiWaitRetries = 0;
                                 transitionHuman05s(BotState.AH_YOUR_ITEMS_INSPECT, "§eLấy Elytra hạ giá 1M...");
-                            } else transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 4, 8, statusText);
+                            } else transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 2, 4, statusText);
                             return;
                         }
-                        if (clickedNextPage && title.contains("page 1") && ++guiWaitRetries < 14 + random.nextInt(4)) { transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 6, 11, "§dĐợi sang Trang 2..."); return; }
+                        if (clickedNextPage && title.contains("page 1") && ++guiWaitRetries < 13 + random.nextInt(4)) { transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 3, 6, "§dĐợi sang Trang 2..."); return; }
                         int validCount = countValidAhElytras(client, s);
                         if (enableAhPage2 && !clickedNextPage && title.contains("page 1") && validCount < minElytraPerPage && hasNextPageButton(s)) {
                             int nextSlot = findSlotByName(client, "Next page", slotAhNextPageBtn);
@@ -1182,7 +1199,7 @@ public class ElytraFlipClient implements ClientModInitializer {
                                 page1LowestAh = scanAhLowestPrice(client, s); page1CompetitorsBelowTarget = countCompetitorsBelowTarget(client, s, myOrderPrice);
                                 clickedNextPage = true; guiWaitRetries = 0; lastPriceSnapshotHash = -1; guiSettleTicks = 0;
                                 transitionHuman05s(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, "§dTrang 1 ít Ely -> Xem Trang 2...");
-                            } else transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 4, 8, statusText);
+                            } else transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 2, 4, statusText);
                             return;
                         }
                         double lowAh = combineLowestPrice(page1LowestAh, scanAhLowestPrice(client, s));
@@ -1192,11 +1209,11 @@ public class ElytraFlipClient implements ClientModInitializer {
                         else needAhRelist = false;
                         if (clickSlotIfOpen(client, findSlotByName(client, "Your Items", slotAhYourItemsBtn), SlotActionType.PICKUP)) {
                             guiWaitRetries = 0; transitionHuman05s(BotState.AH_YOUR_ITEMS_INSPECT, "§eKiểm tra Your Items...");
-                        } else transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 4, 8, statusText);
+                        } else transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 2, 4, statusText);
                         return;
                     }
                 }
-                if (++guiWaitRetries < 21 + random.nextInt(5)) transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 6, 11, statusText);
+                if (++guiWaitRetries < 20 + random.nextInt(5)) transitionRandom(BotState.AH_CHECK_READ_AND_CLICK_YOUR_ITEMS, 3, 6, statusText);
                 else { if (client.currentScreen != null) client.player.closeHandledScreen(); state = BotState.AH_MONITOR_WAIT; }
             }
             case AH_YOUR_ITEMS_INSPECT -> {
@@ -1206,27 +1223,27 @@ public class ElytraFlipClient implements ClientModInitializer {
                         if (needAhRelist) {
                             if (clickSlotIfOpen(client, mySlot, SlotActionType.PICKUP)) {
                                 finalAhSellPrice = pendingRelistPrice; forceAhRefresh60s = false; guiWaitRetries = 0;
-                                transitionRandom(BotState.AH_WAIT_RELIST_INV, 14, 22, "§eĐợi Elytra về ô đồ...");
-                            } else transitionRandom(BotState.AH_YOUR_ITEMS_INSPECT, 4, 8, statusText);
+                                transitionRandom(BotState.AH_WAIT_RELIST_INV, 8, 14, "§eĐợi Elytra về ô đồ...");
+                            } else transitionRandom(BotState.AH_YOUR_ITEMS_INSPECT, 2, 4, statusText);
                         } else { client.player.closeHandledScreen(); humanizeCameraMovements(client); state = BotState.AH_MONITOR_WAIT; }
                         return;
                     }
                     if (++guiWaitRetries >= 5) { restartCycleSafeHuman(client, "§aĐã bán xong! Quét lại..."); return; }
                 }
-                if (++guiWaitRetries < 14 + random.nextInt(4)) transitionRandom(BotState.AH_YOUR_ITEMS_INSPECT, 6, 11, statusText);
+                if (++guiWaitRetries < 13 + random.nextInt(4)) transitionRandom(BotState.AH_YOUR_ITEMS_INSPECT, 3, 6, statusText);
                 else { if (client.currentScreen != null) client.player.closeHandledScreen(); state = BotState.AH_MONITOR_WAIT; }
             }
             case AH_WAIT_RELIST_INV -> {
-                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.AH_WAIT_RELIST_INV, 12, 20, "§eĐóng Your Items..."); return; }
-                if (findElytraInInventory(client) != -1) { transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 16, 28, "§eBán lại: " + formatMoney(finalAhSellPrice)); return; }
-                if (++guiWaitRetries < 12 + random.nextInt(4)) transitionRandom(BotState.AH_WAIT_RELIST_INV, 6, 11, "§eĐợi Elytra về túi...");
+                if (client.currentScreen != null) { client.player.closeHandledScreen(); transitionRandom(BotState.AH_WAIT_RELIST_INV, 6, 11, "§eĐóng Your Items..."); return; }
+                if (findElytraInInventory(client) != -1) { transitionRandom(BotState.SELL_SELECT_HOTBAR_SLOT, 8, 14, "§eBán lại: " + formatMoney(finalAhSellPrice)); return; }
+                if (++guiWaitRetries < 12 + random.nextInt(4)) transitionRandom(BotState.AH_WAIT_RELIST_INV, 3, 6, "§eĐợi Elytra về túi...");
                 else restartCycleSafeHuman(client, "§aLàm lại...");
             }
             default -> {}
         }
     }
 // === HẾT PHẦN 6 ===
-            private int findBountyGreenConfirmSlot(HandledScreen<?> s) {
+          private int findBountyGreenConfirmSlot(HandledScreen<?> s) {
         int limit = Math.min(27, s.getScreenHandler().slots.size());
         for (int i = 0; i < limit; i++) {
             ItemStack st = s.getScreenHandler().getSlot(i).getStack();
@@ -1328,8 +1345,8 @@ public class ElytraFlipClient implements ClientModInitializer {
                 else if (l.startsWith("DISCOUNT_ON:")) autoDiscountEnabled = Boolean.parseBoolean(l.substring(12).trim());
                 else if (l.startsWith("DISCOUNT_SEC:")) discountWaitSec = Integer.parseInt(l.substring(13).trim());
                 else if (l.startsWith("REFRESH_SEC:")) refreshIntervalSec = Integer.parseInt(l.substring(12).trim());
-                else if (l.startsWith("MIN_TICK:")) minRandomTick = Math.max(7, Integer.parseInt(l.substring(9).trim()));
-                else if (l.startsWith("MAX_TICK:")) maxRandomTick = Math.max(minRandomTick + 6, Integer.parseInt(l.substring(9).trim()));
+                else if (l.startsWith("MIN_TICK:")) minRandomTick = Math.max(4, Integer.parseInt(l.substring(9).trim()));
+                else if (l.startsWith("MAX_TICK:")) maxRandomTick = Math.max(minRandomTick + 4, Integer.parseInt(l.substring(9).trim()));
             }
         } catch (Exception ignored) {}
     }
@@ -1441,7 +1458,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         if (!showHud) return;
         ctx.fill(6, 6, 272, 100, 0xCC0B0F17); ctx.fill(6, 6, 272, 8, running ? 0xFF00E676 : 0xFFFF5252); ctx.fill(6, 99, 272, 100, 0xFF00E5FF);
         double avg = soldCount > 0 ? (totalProfit / soldCount) : 0;
-        String afkBadge = autoPayEnabled ? " §a[Bounty: BẬT]" : " §a[UltraAntiBan]";
+        String afkBadge = autoLogOnPlayer ? " §a[0.3s + AutoLog]" : " §a[0.3s AntiBan]";
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§6§l⚡ AUTO FLIP ELYTRA" + afkBadge), 12, 12, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§7Trạng thái: " + statusText), 12, 24, 0xFFFFFF);
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§fĐã bán: §b§l" + soldCount + " cái §7| Gần nhất: §a+" + formatMoney(lastProfit)), 12, 36, 0xFFFFFF);
@@ -1451,7 +1468,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         ctx.drawTextWithShadow(client.textRenderer, Text.literal("§8[F6] Bật/Tắt Bot  •  [F9] Bảng Settings"), 12, 85, 0xAAAAAA);
     }
 // === HẾT PHẦN 7 ===
-          private int findEmptyHotbarSlot(MinecraftClient client) {
+           private int findEmptyHotbarSlot(MinecraftClient client) {
         for (int i = 0; i < 9; i++) if (client.player.getInventory().getStack(i).isEmpty()) return i;
         return 8;
     }
@@ -1494,7 +1511,7 @@ public class ElytraFlipClient implements ClientModInitializer {
 
     private void prepareSignSubmission(String txt, BotState next) {
         this.pendingSignText = txt; this.nextStateAfterSign = next; this.guiWaitRetries = 0;
-        this.state = BotState.SUBMIT_SIGN_GUI; this.waitTicks = 9 + random.nextInt(9);
+        this.state = BotState.SUBMIT_SIGN_GUI; this.waitTicks = 5 + random.nextInt(5);
     }
 
     private void fillAndCloseSign(MinecraftClient client, AbstractSignEditScreen signScreen, String line1) {
@@ -1626,7 +1643,7 @@ public class ElytraFlipClient implements ClientModInitializer {
         } catch (Exception ignored) {}
     }
 
-    // ĐỘ TRỄ CLICK BIÊN ĐỘ RỘNG (180ms - 1250ms) PHÂN PHỐI GAUSS + NHÍCH NHẸ CAMERA ĐỂ KHÔNG BỊ CỐ ĐỊNH TỌA ĐỘ
+    // TỐC ĐỘ BẤM NHANH ~0.3s (210ms - 460ms) PHÂN PHỐI GAUSS + NHÍCH NHẸ YAW/PITCH CHỐNG CỐ ĐỊNH TỌA ĐỘ
     private boolean clickSlotIfOpen(MinecraftClient client, int slotId, SlotActionType type) {
         long now = System.currentTimeMillis();
         if (now - lastClickTimeMs < nextAllowedClickDelayMs) return false;
@@ -1634,17 +1651,17 @@ public class ElytraFlipClient implements ClientModInitializer {
                 && slotId < s.getScreenHandler().slots.size() && client.interactionManager != null) {
             simulateMouseMoveToSlot(client, s, slotId);
             if (client.player != null) {
-                client.player.setYaw(client.player.getYaw() + (random.nextFloat() - 0.5f) * 0.45f);
-                client.player.setPitch(Math.max(-60.0f, Math.min(60.0f, client.player.getPitch() + (random.nextFloat() - 0.5f) * 0.25f)));
+                client.player.setYaw(client.player.getYaw() + (random.nextFloat() - 0.5f) * 0.55f);
+                client.player.setPitch(Math.max(-60.0f, Math.min(60.0f, client.player.getPitch() + (random.nextFloat() - 0.5f) * 0.30f)));
             }
             lastClickTimeMs = now;
             long nextDelay;
             do {
                 double gauss = Math.abs(random.nextGaussian());
-                nextDelay = 185 + Math.round(gauss * 340) + random.nextInt(260);
-                if (random.nextInt(9) == 0) nextDelay += 350 + random.nextInt(480); // Khựng nhẹ tự nhiên lên tới ~1250ms
-                nextDelay = Math.max(180, Math.min(1320, nextDelay));
-            } while (Math.abs(nextDelay - lastUsedDelayMs) < 28);
+                nextDelay = 210 + Math.round(gauss * 115) + random.nextInt(95); // Trung bình ~300ms (0.3s)
+                if (random.nextInt(14) == 0) nextDelay += 180 + random.nextInt(260); // Nhịp chững nhẹ tự nhiên
+                nextDelay = Math.max(200, Math.min(780, nextDelay));
+            } while (Math.abs(nextDelay - lastUsedDelayMs) < 16);
             lastUsedDelayMs = nextDelay;
             nextAllowedClickDelayMs = nextDelay;
             client.interactionManager.clickSlot(s.getScreenHandler().syncId, slotId, 0, type, client.player);
@@ -1653,7 +1670,6 @@ public class ElytraFlipClient implements ClientModInitializer {
         return false;
     }
 
-    // DELAY RIÊNG CHO LỆNH /ah TỪ 3.3s - 5.8s ĐỂ CHỐNG QUÉT SPAM AH TUYỆT ĐỐI
     private boolean sendCommandSafe(MinecraftClient client, String cmd) {
         boolean isAhCmd = cmd.trim().toLowerCase().startsWith("ah");
         if (cmdCooldownTicks > 0 || (isAhCmd && ahCmdCooldownTicks > 0)) return false;
@@ -1661,23 +1677,24 @@ public class ElytraFlipClient implements ClientModInitializer {
             releaseAllAfkKeys(client);
             humanizeCameraMovements(client);
             client.player.networkHandler.sendChatCommand(cmd);
-            cmdCooldownTicks = 32 + random.nextInt(26);
-            if (isAhCmd) ahCmdCooldownTicks = 66 + random.nextInt(50); // 3.3s - 5.8s giữa 2 lệnh /ah
+            cmdCooldownTicks = 16 + random.nextInt(12);
+            if (isAhCmd) ahCmdCooldownTicks = 24 + random.nextInt(18);
             return true;
         }
         return false;
     }
 
+    // Nhịp chuyển bước nhanh ~0.3s (5 - 10 ticks) kết hợp nốt nghỉ ngắn ngẫu nhiên chống Pattern máy tính
     private void transitionHuman05s(BotState next, String status) {
-        int low = Math.max(7, minRandomTick), high = Math.max(low + 6, maxRandomTick);
-        int pauseSpike = (random.nextInt(14) == 0) ? (55 + random.nextInt(45)) : random.nextInt(6); // Thỉnh thoảng nghỉ 3-5 giây tự nhiên
-        transitionRandom(next, low + pauseSpike, high + pauseSpike + random.nextInt(5), status);
+        int low = Math.max(4, minRandomTick), high = Math.max(low + 3, maxRandomTick);
+        int pauseSpike = (random.nextInt(18) == 0) ? (16 + random.nextInt(18)) : random.nextInt(3);
+        transitionRandom(next, low + pauseSpike, high + pauseSpike + random.nextInt(3), status);
     }
 
     private void transitionRandom(BotState next, int min, int max, String status) {
         this.state = next;
-        int span = Math.max(3, max - min + 1);
-        this.waitTicks = min + random.nextInt(span) + (random.nextBoolean() ? random.nextInt(4) : 0);
+        int span = Math.max(2, max - min + 1);
+        this.waitTicks = min + random.nextInt(span) + (random.nextBoolean() ? random.nextInt(3) : 0);
         this.statusText = status;
     }
 
@@ -1733,9 +1750,9 @@ public class ElytraFlipClient implements ClientModInitializer {
             try { autoPayThreshold = Math.max(0.1, Double.parseDouble(thresholdField.getText().trim())) * 1_000_000; } catch (Exception ignored) {}
             try { autoPayAmount = Math.max(0.1, Double.parseDouble(payAmountField.getText().trim())) * 1_000_000; } catch (Exception ignored) {}
             try { minProfit = Math.max(0.1, Double.parseDouble(minProfitField.getText().trim())) * 1_000_000; } catch (Exception ignored) {}
-            try { discountWaitSec = Math.max(20, Integer.parseInt(discountSecField.getText().trim())); } catch (Exception ignored) {}
-            try { refreshIntervalSec = Math.max(25, Integer.parseInt(refreshField.getText().trim())); } catch (Exception ignored) {}
-            try { minRandomTick = Math.max(7, Integer.parseInt(tickField.getText().trim())); maxRandomTick = minRandomTick + 10; } catch (Exception ignored) {}
+            try { discountWaitSec = Math.max(15, Integer.parseInt(discountSecField.getText().trim())); } catch (Exception ignored) {}
+            try { refreshIntervalSec = Math.max(20, Integer.parseInt(refreshField.getText().trim())); } catch (Exception ignored) {}
+            try { minRandomTick = Math.max(4, Integer.parseInt(tickField.getText().trim())); maxRandomTick = minRandomTick + 5; } catch (Exception ignored) {}
             mod.saveConfig(MinecraftClient.getInstance());
         }
 
@@ -1750,10 +1767,10 @@ public class ElytraFlipClient implements ClientModInitializer {
             ctx.fill(cx - 174, py + 45, cx - 4, py + 210, 0x99161F2E); ctx.fill(cx + 4, py + 45, cx + 174, py + 210, 0x99161F2E);
 
             int rowY = py + 63, labelX = cx + 10;
-            String[] labels = {"§fTên Add Bounty:", "§fĐủ lời Add (M):", "§fNhập tiền Add (M):", "§fLời tối thiểu (M):", "§fChờ hạ 1M (Giây):", "§fHủy làm mới (s):", "§fRandom Delay (Tick):"};
+            String[] labels = {"§fTên Add Bounty:", "§fĐủ lời Add (M):", "§fNhập tiền Add (M):", "§fLời tối thiểu (M):", "§fChờ hạ 1M (Giây):", "§fHủy làm mới (s):", "§fĐộ trễ 0.3s (Tick):"};
             for (int i = 0; i < labels.length; i++) { int ry = rowY + i * 21; ctx.fill(cx + 8, ry - 4, cx + 170, ry + 13, 0x88090D14); }
             super.render(ctx, mouseX, mouseY, delta);
-            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal("§6§l✦ DONUT ELYTRA FLIP §a§lULTRA ANTI-BAN + BOUNTY §7(F9) ✦"), cx, py + 6, 0xFFFFFF);
+            ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal("§6§l✦ DONUT ELYTRA FLIP §a§l0.3S ANTI-BAN + AUTOLOG §7(F9) ✦"), cx, py + 6, 0xFFFFFF);
             String sCard = "§7Đã bán: §b§l" + mod.soldCount + "  §8|  §7Tổng lời: §e§l+" + mod.formatMoney(mod.totalProfit) + "  §8|  §7Tốc độ: §d§l+" + mod.formatMoney(mod.getProfitPerHour()) + "/h  §8|  §7Đợi Bounty: §a§l" + mod.formatMoney(mod.unpaidProfitPool);
             ctx.drawCenteredTextWithShadow(this.textRenderer, Text.literal(sCard), cx, py + 22, 0xFFFFFF);
             ctx.drawTextWithShadow(this.textRenderer, Text.literal("§b§l⚙ CÔNG TẮC TÍNH NĂNG"), cx - 168, py + 46, 0xFFFFFF);
@@ -1763,3 +1780,4 @@ public class ElytraFlipClient implements ClientModInitializer {
     }
 }
 // === HOÀN TẤT 100% ===
+                                                                                                                                            
